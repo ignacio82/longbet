@@ -78,12 +78,12 @@ y <- z * y1 + (1 - z) * y0
 z_mat <- cbind(matrix(0, n, (t0 - 1)),  matrix(rep(z, t1 - t0 + 1), n, t1 - t0 + 1))
 
 t_longbet <- proc.time()
-longbet.fit <- longBet(y = y, x = x, z = z_mat, t = 1:t1, p_cat = 1,
-num_trees_pr =  50, num_trees_trt = 50)
+longbet.fit <- longBet(y = y, x = x, z = z_mat, t = 1:t1, pcat = 1,
+                       num_trees_pr =  50, num_trees_trt = 50)
 tau_hat_longBet <- apply(longbet.fit$tauhats.adjusted, c(1, 2), mean)
 t_longbet <- proc.time() - t_longbet
 
-print(paste0("longBet RMSE: ", sqrt(mean((as.vector(tau_longBet[, t0:t1]) - as.vector(te[,t0:t1]))^2))))
+print(paste0("longBet RMSE: ", sqrt(mean((as.vector(tau_hat_longBet[, t0:t1]) - as.vector(te[,t0:t1]))^2))))
 print(paste0("longBet runtime: ", round(as.list(t_longbet)$elapsed,2)," seconds"))
 
 ```
