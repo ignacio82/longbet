@@ -1,3 +1,50 @@
+# longbet 0.5.3
+
+## Added: `att_stability()`, because under-covering intervals were silent
+
+A 40-replication study of a staggered rollout found LongBet's ATT intervals
+covering about 89% against a nominal 95%. The tempting explanation was the
+error model -- within-unit serial correlation the likelihood does not
+represent. That explanation is wrong, and the measurement that killed it is
+simple: on the same panels with the same seeds, coverage reaches 95.5% when
+the sampler runs 300 sweeps instead of 80. A design effect is a property of
+the data; it cannot be what extra sweeps repaired.
+
+The cause is the sampler. XBART grows a fresh forest every sweep rather than
+walking one chain through tree space, so the object it returns approximates
+the posterior, and the approximation improves with the number of sweeps
+averaged. Too few, and the quantiles come from a slice of the posterior rather
+than the posterior -- narrow for the same reason any under-explored posterior
+is narrow. Notably the intervals barely widen with more sweeps (0.0474 to
+0.0491); most of the coverage gain comes from the point estimate moving onto
+the truth, with RMSE improving 15%.
+
+None of which the user could see. `att_stability()` makes it visible: it
+reports the **effective number of independent sweeps** behind the reported
+ATT, estimated from the autocorrelation of the per-sweep series, and warns
+when that number is too small to support an interval. It works on the quantity
+you report rather than on `beta` or `sigma`, which is the same rule the
+package's diagnostics have followed throughout.
+
+A split-half comparison is reported too, and the documentation is explicit
+about what it is not for. It detects drift -- a sampler still moving, burn-in
+too short. It does **not** detect the narrowness problem: sweeps are roughly
+exchangeable after burn-in, so both halves are narrow together and the ratio
+sits near 1 whether or not you have run long enough. This was the first design
+for the whole function and it was discarded when it failed to separate 80
+sweeps from 400 (ratios 0.93, 0.95, 0.96) on a fit whose coverage was 86% at
+the short end. It is kept only as a distinct, honestly-labelled drift check.
+
+Validated against known coverage on the panel that motivated it:
+
+    sweeps  80   reliable FALSE   ess 23.4
+    sweeps 200   reliable TRUE    ess 53.2
+    sweeps 400   reliable TRUE    ess 64.9
+
+The `min_ess = 50` default is a guideline calibrated on panels of this shape,
+not a theorem, and says so in the help. 13 new checks in
+`tests/test_stability.R`.
+
 # longbet 0.5.2
 
 ## Fixed: a non-absorbing `z` aborted inside the sampler
