@@ -1,3 +1,84 @@
+# longbet 0.4.0
+
+## Fixed: the propensity score was accepted and ignored
+
+`longbet()` has always taken a `ps` argument. The code that used it was
+commented out, so passing one changed nothing -- verifiably: fits with and
+without `ps` returned bit-identical draws. That matters more than a dead
+argument usually would, because conditioning the prognostic forest on an
+estimate of `pi(x)` is precisely what separates Bayesian Causal Forest from
+BART on a panel. Without it, strong confounding plus tree shrinkage produces
+regularization-induced confounding, and the observational setting that LongBet
+is *advertised for* is exactly where that bites.
+
+`ps` is now appended to the prognostic covariates, after the continuous columns
+and before the categorical block so `pcat` keeps its meaning. It is never given
+to the treatment forest, which is the BCF design. `predict.longbet()` rebuilds
+the column for you when you predict on the training rows and asks for `ps`
+when you predict on new ones.
+
+**Measured** on a panel version of the Hahn/Murray/Carvalho targeted-selection
+design, where adoption probability is driven by the prognostic surface itself
+(`cor(pi, mu) = 0.62`) and that surface is non-linear:
+
+| prognostic covariates | CATT RMSE |
+|---|---|
+| no propensity score | 0.201 |
+| true `pi(x)` | **0.166** |
+| estimated, correctly specified | 0.196 |
+| estimated, misspecified (linear in x) | 0.226 |
+
+The true score is worth about 17%. An estimate is worth having only if it is a
+good one: a logistic fit that misses the non-linearity in `mu` made things
+*worse* than omitting it. That is the standard caveat about propensity
+adjustment and it survives intact here.
+
+## Fixed: getTaus() and getMus() were exported and broken
+
+Both raised an error on every fit. They read `fit$tauhats.adjusted`, which the
+C++ side returns as `NULL`. They could not have worked from `fit$tauhats`
+either: that field holds the raw treatment-forest output `nu(X, S)` on the
+standardized scale, not the effect. The effect is the contrast
+`b1 * beta_S * nu(X, S) - b0 * beta_0 * nu(X, 0)`, which needs the forest
+evaluated at `S = 0` as well and is what `predict.longbet()` assembles.
+
+Both now take a *prediction* rather than a fit, and return what their names
+say. Handing one a fit gives an error that says to call `predict.longbet()`
+first, rather than a shape error from `rowMeans`.
+
+## Fixed: the package printed to stdout and could not be silenced
+
+`longbet()` and `predict.longbet()` reported input coercions, the defaulted
+`pcat_trt`, and every Gaussian process extrapolation through `cat()` and
+`print()`. Neither is suppressible with `suppressMessages()`, so any loop, any
+knitted document and any test suite was flooded. They are now `message()` calls
+behind a new `verbose` argument, default `FALSE`.
+
+`verbose` deliberately does *not* switch on the C++ sampler's per-tree trace,
+which is a genuine firehose -- one block per tree per sweep. That is
+`verbose_sampler`, also default `FALSE`.
+
+## New: `summary_only` for predictions
+
+`predict.longbet()` returns three `[n x t x draws]` arrays. On the 3,000-seller
+panel in the LongBet chapter that is 14 MB; at a hundred thousand units it is
+the reason the session dies. `summary_only = TRUE` returns the posterior mean
+and an `alpha`-level interval instead and drops the draws -- 13.9 MB to 0.5 MB
+on that panel. `get_catt()` understands the summarised object; `get_att()`
+needs the draws and says so.
+
+The summary fields are `tau_summary` and `mu0_summary`, deliberately not
+`tauhats_summary`: R's `$` does partial matching on lists, so the latter would
+make `pred$tauhats` silently resolve to a list after the draws were dropped.
+
+## Cleanup: the namespace
+
+`NAMESPACE` used `exportPattern("^[[:alpha:]]+")`, which made `check_scalar`,
+`sample_int_crank`, `longbet_cpp`, `predict_beta` and eight other internals
+part of the public API. It is now an explicit list of eight functions, with
+`predict.longbet` registered as an S3 method as well as exported, since
+existing code -- including the package's own examples -- calls it directly.
+
 # longbet 0.3.1
 
 ## Fixed: a unit treated in the first observed period crashed the sampler

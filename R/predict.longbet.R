@@ -4,6 +4,14 @@
 #' @param x An input matrix for size n by p1. Column order matters: continuos features should all bgo before of categorical.
 #' @param z n by p_y treatment matrix indicating whether each unit get treated at each step, should match the training period
 #' @param gp bool, predict time coefficient beta using gaussian process
+#' @param ps propensity scores for the rows of `x`, required when the model was
+#'   fit with `ps` and `x` is supplied without that column. Defaults to the
+#'   training scores when predicting on the training rows.
+#' @param summary_only return posterior means and `alpha`-level intervals
+#'   instead of the full [n x t x draws] arrays. On a large panel the arrays are
+#'   the dominant memory cost; this drops them.
+#' @param alpha interval width used when `summary_only` is TRUE.
+#' @param verbose print progress messages (default FALSE).
 #' @param random_seed integer seed for the Gaussian process draws used when the
 #'   prediction panel reaches further past treatment than the training panel
 #'   did. The extrapolated beta is sampled, not computed, so without a seed the
@@ -17,10 +25,33 @@
 #'   so probabilities are `pnorm(muhats0)` and `pnorm(muhats0 + tauhats)`. 
 #' @export
 predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
-                            lambda = NULL, random_seed = 1, ...) {
+                            lambda = NULL, random_seed = 1, ps = NULL,
+                            summary_only = FALSE, alpha = 0.05,
+                            verbose = FALSE, ...) {
+
+    # If the fit used a propensity score, the prognostic covariates it was
+    # trained on carry an extra column. Rebuild it here rather than making the
+    # caller remember, but insist on being told the scores for new units.
+    if (isTRUE(model$use_ps)) {
+        if (!("matrix" %in% class(x))) x <- as.matrix(x)
+        if (ncol(x) == model$input_var_count$x_con - 1) {
+            if (is.null(ps)) {
+                if (nrow(x) == length(model$ps)) {
+                    ps <- model$ps          # predicting on the training rows
+                } else {
+                    stop("this model was fit with a propensity score, so ",
+                         "predict() needs `ps` for these rows. \n")
+                }
+            }
+            if (length(ps) != nrow(x)) {
+                stop("ps must have one entry per row of x. \n")
+            }
+            x <- insert_ps(x, as.numeric(ps), model$pcat)
+        }
+    }
 
     if(!("matrix" %in% class(x))) {
-        cat("Msg: input x is not a matrix, try to convert type.\n")
+        if (verbose) message("input x is not a matrix; converting.")
         x = as.matrix(x)
     }
 
@@ -31,7 +62,7 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
     }
 
     if(!("matrix" %in% class(x_trt))) {
-        cat("Msg: input x is not a matrix, try to convert type.\n")
+        if (verbose) message("input x is not a matrix; converting.")
         x_trt = as.matrix(x_trt)
     }
 
@@ -42,7 +73,7 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
     }
 
     if(!("matrix" %in% class(z))) {
-        cat("Msg: input z is not a matrix, try to convert type.\n")
+        if (verbose) message("input z is not a matrix; converting.")
         z = as.matrix(z)
     }
 
@@ -54,13 +85,13 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
     if (is.null(t)){
         # Was longbet.fit$time, which only resolved when the caller happened to
         # have named the fitted object longbet.fit in the global environment.
-        print(paste(c("Predicting from time", model$time), collapse = " "))
+        if (verbose) message(paste(c("Predicting from time", model$time), collapse = " "))
         t_con <-  matrix(rep(model$time, nrow(x)), nrow = nrow(x), byrow = T)
     } else {
         if (length(t) != ncol(z)){
             stop("Msg: lenght of t should match the size of z. \n")
         }
-        print(paste(c("Predicting from time", t), collapse = " "))
+        if (verbose) message(paste(c("Predicting from time", t), collapse = " "))
         t_con <-  matrix(rep(t, nrow(x)), nrow = nrow(x), byrow = T)
     }
 
@@ -94,7 +125,8 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
         # stop("TODO: update extrapolation code for staggered adoption, \n")
         if (is.null(sigma)) {  sigma = 1 }
         if (is.null(lambda)) { lambda = nrow(model$beta_values) / 2}
-        print(paste("predict beta with GP, sigma = ", sigma, ", lambda = ", lambda, sep = ""))
+        if (verbose) message("extrapolating beta with the GP, sigma = ", sigma,
+                             ", lambda = ", lambda)
 
         # beta to be predicted?
         beta_test <- as.matrix((S + 1) : max_post_trt)
@@ -138,12 +170,37 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
     obj$beta_values <- model$beta_values
     obj$beta_preds <- beta_preds
     obj$z <- z
+
+    # Full posterior arrays are [n x t x draws]; on a large panel the three of
+    # them together are the biggest object in the session. summary_only keeps
+    # the posterior mean and the interval and throws the draws away.
+    if (summary_only) {
+        summarise <- function(a) list(
+            mean  = apply(a, c(1, 2), mean),
+            lower = apply(a, c(1, 2), quantile, probs = alpha / 2),
+            upper = apply(a, c(1, 2), quantile, probs = 1 - alpha / 2))
+        # Deliberately not called tauhats_summary: R's `$` does partial
+        # matching on lists, so obj$tauhats would silently resolve to it after
+        # the draws are dropped, and callers would get a list where they
+        # expected an array.
+        obj$tau_summary <- summarise(obj$tauhats)
+        obj$mu0_summary <- summarise(obj$muhats0)
+        obj$tauhats <- NULL
+        obj$muhats  <- NULL
+        obj$muhats0 <- NULL
+        obj$beta_preds <- NULL
+        obj$summary_only <- TRUE
+    }
     return(obj)
 }
 
 get_att <- function(object, alpha = 0.05, ...){
-    if(class(object) != "longbet.pred"){
-        stop("Input object should be output from predict.longbet function")    
+    if (!inherits(object, "longbet.pred")) {
+        stop("get_att() needs the output of predict.longbet().", call. = FALSE)
+    }
+    if (isTRUE(object$summary_only)) {
+        stop("get_att() needs the posterior draws; call predict.longbet() ",
+             "with summary_only = FALSE.", call. = FALSE)
     }
     # att_full <- apply(object$tauhats[z,,], c(2, 3), mean)
 
@@ -170,8 +227,15 @@ get_att <- function(object, alpha = 0.05, ...){
 }
 
 get_catt <- function(object, alpha = 0.05, ...){
-    if(class(object) != "longbet.pred"){
-        stop("Input object should be output from predict.longbet function")    
+    if (!inherits(object, "longbet.pred")) {
+        stop("get_catt() needs the output of predict.longbet().", call. = FALSE)
+    }
+    if (isTRUE(object$summary_only)) {
+        # Already summarised at predict time; hand back the same shape.
+        return(list(catt = object$tau_summary$mean,
+                    intervals = array(c(object$tau_summary$lower,
+                                        object$tau_summary$upper),
+                                      dim = c(2, dim(object$tau_summary$mean)))))
     }
     obj <- list()
     obj$catt <- apply(object$tauhats, c(1, 2), mean)

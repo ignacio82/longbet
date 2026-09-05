@@ -17,6 +17,13 @@
 #' @param n_min The minimum node size. (default is 1)
 #' @param sig_knl variance parameter for squared exponential kernel (default is 1).
 #' @param lambda_knl lengthscale parameter for squared exponential kernel (default is 1).
+#' @param ps optional vector of estimated propensity scores, one per unit. It
+#'   is appended to the *prognostic* covariates only, which is what Bayesian
+#'   Causal Forest does and why it is robust to targeted selection; the
+#'   treatment forest never sees it. Supplying it does nothing in an experiment
+#'   where assignment is known and unconfounded, and matters a great deal in an
+#'   observational panel. Note that this argument was silently ignored through
+#'   version 0.3.1.
 #' @param split_time_ps whether to split on time variable in prognostic trees (default is TRUE)
 #' @param split_time_trt whether to split on time variable in treatment trees (default is FALSE)
 #'
@@ -47,25 +54,26 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     max_depth = 50, num_cutpoints = 20,
                     a_scaling = TRUE, b_scaling = FALSE,
                     random_seed = 0, parallel = TRUE, verbose = FALSE,
+                    verbose_sampler = FALSE,
                     ps = NULL) {
 
     outcome <- match.arg(outcome)
     binary_outcome <- identical(outcome, "binary")
 
     if(!("matrix" %in% class(x))){
-        cat("Msg: input x is not a matrix, try to convert type.\n")
+        if (verbose) message("input x is not a matrix; converting.")
         x = as.matrix(x)
     }
     if(!("matrix" %in% class(x_trt))){
-        cat("Msg: input x is not a matrix, try to convert type.\n")
+        if (verbose) message("input x is not a matrix; converting.")
         x_trt = as.matrix(x_trt)
     }
     if(!("matrix" %in% class(z))){
-        cat("Msg: input z is not a matrix, try to convert type.\n")
+        if (verbose) message("input z is not a matrix; converting.")
         z = as.matrix(z)
     }
     if(!("matrix" %in% class(y))){
-        cat("Msg: input y is not a matrix, try to convert type.\n")
+        if (verbose) message("input y is not a matrix; converting.")
         y = as.matrix(y)
     }
 
@@ -101,20 +109,31 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
         stop("Lenght of input t should match the columns of y. \n")
     }
 
-    # if (!is.null(ps)){
-    #     if (!"matrix" %in% class(ps)){
-    #         ps = as.matrix(ps)
-    #     }
-    #     if (nrow(ps) != nrow(x)){
-    #         stop("Size of propsensity score vector should match x, \n")
-    #     } 
-    #     x_mod <- cbind(x, ps)
-    # }
-    # else {
-    #     x_mod <- x
-    #       # TODO: if propensity score is used in training, it should be provided in testing
-            # if it is not provided it should be estimated?
-    # }
+    # Propensity score. Through 0.3.1 this argument was accepted and then
+    # ignored -- the code below was commented out -- which mattered because
+    # conditioning the prognostic forest on an estimate of pi(x) is the whole
+    # point of BCF over BART: without it, strong confounding plus tree
+    # shrinkage produces regularization-induced confounding (Hahn, Murray and
+    # Carvalho 2020). It belongs in the prognostic term only, never in the
+    # treatment term, which is why only x is augmented and x_trt is not.
+    #
+    # It is appended after the continuous columns and before the categorical
+    # block, so the "continuous first, categorical last" contract that pcat
+    # relies on still holds and pcat itself does not change.
+    use_ps <- !is.null(ps)
+    if (use_ps) {
+        ps <- as.numeric(ps)
+        if (length(ps) != nrow(x)) {
+            stop("ps must have one entry per row of x (", nrow(x), "); got ",
+                 length(ps), ". \n")
+        }
+        if (any(!is.finite(ps))) stop("ps contains missing or infinite values. \n")
+        if (min(ps) <= 0 || max(ps) >= 1) {
+            warning("ps has values outside (0, 1); positivity is doubtful.",
+                    call. = FALSE)
+        }
+        x <- insert_ps(x, ps, pcat)
+    }
     
     # check if treatment all start at the same time
     # number of treated periods per unit should only be 0 or t1 - t0 + 1
@@ -219,7 +238,7 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
 
     if(is.null(pcat_trt)){
         pcat_trt = pcat
-        cat("Assume number of categories in treatment trees equals ", pcat, "\n")
+        if (verbose) message("assuming pcat_trt = ", pcat, " for the treatment trees.")
     }
 
     # check if p_categorical exceeds the number of columns
@@ -229,12 +248,12 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
 
     # check if mtry exceeds the number of columns
     if(mtry > ncol(x)) {
-        cat('Msg: mtry value cannot exceed number of columns; set to default.\n')
+        if (verbose) message("mtry exceeds the number of columns; using the default.")
         mtry <- 0
     }
     # check if mtry is negative
     if(mtry < 0) {
-        cat('Msg: mtry value cannot exceed number of columns; set to default.\n')
+        if (verbose) message("mtry exceeds the number of columns; using the default.")
         mtry <- 0
     }
 
@@ -330,7 +349,7 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     kap_trt = kap_mod, 
                     s_trt = s_mod,
                     trt_scale = trt_scale,
-                    verbose = verbose, 
+                    verbose = verbose_sampler, 
                     parallel = parallel, 
                     set_random_seed = set_random_seed,
                     random_seed = random_seed, 
@@ -352,6 +371,9 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     sigma_u_init = sigma_u_init)
     class(obj) = "longbet"
 
+    obj$use_ps = use_ps
+    obj$ps = if (use_ps) ps else NULL
+    obj$pcat = pcat
     obj$time = t_con
     obj$t0 = t0
     obj$sdy = sdy
@@ -368,6 +390,14 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     return(obj)
 }
 
+
+# Put the propensity score after the continuous columns and before the
+# categorical ones, so pcat keeps meaning what it meant.
+insert_ps <- function(x, ps, pcat) {
+    ncont <- ncol(x) - pcat
+    cbind(x[, seq_len(ncont), drop = FALSE], ps = ps,
+          x[, ncont + seq_len(pcat), drop = FALSE])
+}
 
 get_post_trt_time <- function(z_vec, t){
     treated_period <- which(z_vec == 1)

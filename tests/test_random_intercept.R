@@ -193,4 +193,63 @@ ok("a panel with no untreated observation at all is an error",
                         num_sweeps = 5, num_burnin = 2), silent = TRUE),
             "try-error"))
 
+
+
+# ---- 11. the propensity score is actually used ------------------------
+cat("\n-- propensity score --\n")
+ps_v <- pnorm(0.7 * x1 - 0.2)
+f_ps <- do.call(longbet, modifyList(fit_args, list(ps = ps_v)))
+f_no_ps <- do.call(longbet, fit_args)
+ok("ps changes the fit (it was silently ignored through 0.3.1)",
+   !isTRUE(all.equal(sum(f_ps$beta_values), sum(f_no_ps$beta_values))))
+ok("ps enters the prognostic covariates only",
+   f_ps$input_var_count$x_con == ncol(x) + 1 &&
+   f_ps$input_var_count$x_mod == ncol(x))
+ok("predicting on the training rows reuses the stored ps",
+   is.finite(sum(get_catt(predict.longbet(f_ps, x, x, z, t = 1:Tn,
+                                          random_seed = 1))$catt)))
+ok("a wrong-length ps is an error",
+   inherits(try(do.call(longbet, modifyList(fit_args, list(ps = ps_v[-1]))),
+                silent = TRUE), "try-error"))
+
+# ---- 12. the getters work and point at the right object ----------------
+cat("\n-- getters --\n")
+p_g <- predict.longbet(f_no_ps, x, x, z, t = 1:Tn, random_seed = 1)
+ok("getTaus returns the effect, not the raw forest",
+   abs(mean(getTaus(p_g)[z == 1]) - 1.5) < 0.2,
+   sprintf("(%.3f vs a true 1.5)", mean(getTaus(p_g)[z == 1])))
+ok("getMus returns an n by t matrix", all(dim(getMus(p_g)) == c(n, Tn)))
+ok("handing getTaus a fit errors with a pointer to predict()",
+   inherits(try(getTaus(f_no_ps), silent = TRUE), "try-error"))
+
+# ---- 13. quiet by default ----------------------------------------------
+cat("\n-- console output --\n")
+noise <- capture.output({
+  q <- do.call(longbet, fit_args)
+  invisible(predict.longbet(q, x, x, z, t = 1:Tn, random_seed = 1))
+}, type = "output")
+ok("nothing is written to stdout", length(noise) == 0,
+   sprintf("(%d lines)", length(noise)))
+ok("verbose = TRUE still reports",
+   length(capture.output(do.call(longbet, modifyList(fit_args,
+     list(verbose = TRUE))), type = "message")) > 0)
+
+# ---- 14. summary_only ---------------------------------------------------
+cat("\n-- summary_only --\n")
+p_full <- predict.longbet(f_no_ps, x, x, z, t = 1:Tn, random_seed = 1)
+p_sum  <- predict.longbet(f_no_ps, x, x, z, t = 1:Tn, random_seed = 1,
+                          summary_only = TRUE)
+ok("draw arrays are dropped",
+   is.null(p_sum[["tauhats"]]) && is.null(p_sum[["muhats0"]]))
+ok("$tauhats does not partial-match the summary", is.null(p_sum$tauhats))
+ok("the point estimate is preserved exactly",
+   max(abs(p_sum$tau_summary$mean - apply(p_full$tauhats, c(1, 2), mean))) < 1e-12)
+ok("get_catt works on a summary", all(dim(get_catt(p_sum)$catt) == c(n, Tn)))
+ok("get_att refuses a summary",
+   inherits(try(get_att(p_sum), silent = TRUE), "try-error"))
+ok("memory drops by more than 5x",
+   as.numeric(object.size(p_sum)) < 0.2 * as.numeric(object.size(p_full)),
+   sprintf("(%.1f MB -> %.1f MB)", object.size(p_full) / 1e6,
+           object.size(p_sum) / 1e6))
+
 cat("\nAll tests passed.\n")
