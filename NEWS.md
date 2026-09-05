@@ -26,10 +26,10 @@ panel whose true effect was 0 while off, it returned 0.49.
 
 Making the state index switchback-aware is not hard, and an implementation
 that fits such panels and recovers the on/off pattern correctly (0.500 while
-on against a truth of 0.500, -0.011 while off against a truth of 0) is kept
-on the `switchback-exploration` branch.
+on against a truth of 0.500, -0.011 while off against a truth of 0) was
+written and then discarded.
 
-It is not on `main` because the estimand people would actually want from a
+It was discarded because the estimand people would actually want from a
 switchback -- for which units does the effect persist after withdrawal -- is
 not recovered reliably. Against a design where persistence is a known
 function of a covariate, the correlation between the estimated and true
