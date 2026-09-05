@@ -32,7 +32,9 @@ void mcmc_loop_longbet(
   bool split_time_trt,
   matrix<double> &resid_info,
   matrix<double> &A_diag_info,
-  matrix<double> &Sig_diag_info
+  matrix<double> &Sig_diag_info,
+  matrix<double> &gamma_xinfo,
+  std::vector<double> &sigma_gamma_draws
   )
 {
 
@@ -162,6 +164,20 @@ void mcmc_loop_longbet(
     model_ps->update_time_coef(state, x_struct_gp, split_gp->sorder_std,
       resid_info[sweeps], A_diag_info[sweeps], Sig_diag_info[sweeps], beta_info[sweeps]); 
     // cout << "beta " << state->beta_t << endl;
+
+    // Unit random intercepts. Drawn last so that they condition on this
+    // sweep's forests, scalings and time coefficients; skipped on the first
+    // sweep, when the forests are still empty and gamma would swallow the
+    // whole mean structure. Order matters within the block: gamma first,
+    // then its prior scale, otherwise sigma_gamma is drawn from all-zero
+    // gammas and collapses to zero.
+    if (sweeps != 0)
+    {
+      model_ps->update_random_intercept(state);
+      model_ps->update_sigma_gamma(state);
+    }
+    std::copy(state->gamma.begin(), state->gamma.end(), gamma_xinfo[sweeps].begin());
+    sigma_gamma_draws[sweeps] = state->sigma_gamma;
 
     std::copy(state->beta_t.begin(), state->beta_t.end(),
     beta_xinfo[sweeps].begin());

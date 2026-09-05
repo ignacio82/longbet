@@ -58,7 +58,9 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
                     bool sample_weights_flag = true,
                     bool a_scaling = true, bool b_scaling = true,
                     bool split_time_ps = true, bool split_time_trt = false,
-                    double sig_knl = 1, double lambda_knl = 2)
+                    double sig_knl = 1, double lambda_knl = 2,
+                    bool random_intercept = false,
+                    double gamma_prior_a = 1.0, double gamma_prior_b = 0.1)
 {
     // cout << "start training longbet" << endl;
     auto start = system_clock::now();
@@ -273,6 +275,11 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     burnin, model_trt->dim_suffstat));
     // cout << "state->beta_size = " << state->beta_size << endl;
 
+    // Unit-level random intercept settings.
+    state->random_intercept = random_intercept;
+    state->gamma_prior_a    = gamma_prior_a;
+    state->gamma_prior_b    = gamma_prior_b;
+
     // initialize X_struct for the prognostic term
     // TODO: remove sorder
     std::vector<double> initial_theta_pr(1, y_mean / (double)num_trees_pr);
@@ -298,6 +305,10 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     matrix<double> beta_info;
     ini_matrix(beta_info, t_size, num_sweeps);
 
+    matrix<double> gamma_xinfo;
+    ini_matrix(gamma_xinfo, N, num_sweeps);
+    std::vector<double> sigma_gamma_draws(num_sweeps, 0.0);
+
     std::unique_ptr<split_info> split_pr(new split_info(x_struct_pr, Xorder_std, Torder_std, t_values));
     std::unique_ptr<split_info> split_trt(new split_info(x_struct_trt, Xorder_tau_std, Sorder_std, s_values));
     std::unique_ptr<split_info> split_gp(new split_info(x_struct_gp, Xorder_tau_std, Sorder_std, s_values));
@@ -307,7 +318,7 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     mcmc_loop_longbet(split_pr, split_trt, split_gp, verbose, 
         sigma0_draw_xinfo, sigma1_draw_xinfo, b_xinfo, a_xinfo, beta_info, beta_xinfo, *trees_pr, *trees_trt, no_split_penality,
         state, model_pr, model_trt, x_struct_pr, x_struct_trt, x_struct_gp, a_scaling, b_scaling, split_time_ps, split_time_trt, 
-        resid_info, A_diag_info, Sig_diag_info);
+        resid_info, A_diag_info, Sig_diag_info, gamma_xinfo, sigma_gamma_draws);
 
     // predict tauhats and muhats
     // cout << "predict " << endl;
@@ -324,6 +335,11 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     Rcpp::NumericMatrix a_draws(num_sweeps, 1);
     Rcpp::NumericMatrix beta_values(t_size, num_sweeps);
     Rcpp::NumericMatrix beta_draws(p_y, num_sweeps);
+    Rcpp::NumericMatrix gamma_draws(N, num_sweeps);
+    std_to_rcpp(gamma_xinfo, gamma_draws);
+    Rcpp::NumericVector sigma_gamma_out(num_sweeps);
+    for (size_t i = 0; i < num_sweeps; i++) sigma_gamma_out[i] = sigma_gamma_draws[i];
+
     Rcpp::NumericMatrix resid(t_size, num_sweeps);
     Rcpp::NumericMatrix A_diag(t_size, num_sweeps);
     Rcpp::NumericMatrix Sig_diag(t_size, num_sweeps);
@@ -406,6 +422,9 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     return Rcpp::List::create(
         Rcpp::Named("tauhats") = tauhats,
         Rcpp::Named("muhats") = muhats,
+        Rcpp::Named("gamma_draws") = gamma_draws,
+        Rcpp::Named("sigma_gamma_draws") = sigma_gamma_out,
+        Rcpp::Named("random_intercept") = random_intercept,
         Rcpp::Named("sigma0_draws") = sigma0_draws,
         Rcpp::Named("sigma1_draws") = sigma1_draws,
         Rcpp::Named("b_draws") = b_draws,

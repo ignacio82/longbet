@@ -34,5 +34,7 @@ void mcmc_loop_longbet(
   bool split_time_trt,
   matrix<double> &resid_info,
   matrix<double> &A_diag_info,
-  matrix<double> &Sig_diag_info
+  matrix<double> &Sig_diag_info,
+  matrix<double> &gamma_xinfo,
+  std::vector<double> &sigma_gamma_draws
   );

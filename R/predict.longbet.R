@@ -4,10 +4,16 @@
 #' @param x An input matrix for size n by p1. Column order matters: continuos features should all bgo before of categorical.
 #' @param z n by p_y treatment matrix indicating whether each unit get treated at each step, should match the training period
 #' @param gp bool, predict time coefficient beta using gaussian process
+#' @param random_seed integer seed for the Gaussian process draws used when the
+#'   prediction panel reaches further past treatment than the training panel
+#'   did. The extrapolated beta is sampled, not computed, so without a seed the
+#'   projected region of the output changes between otherwise identical calls.
+#'   Pass NULL for a nondeterministic draw.
 #'
 #' @return A matrix for predicted prognostic effect and a matrix for predicted treatment effect. 
 #' @export
-predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL, lambda = NULL, ...) {
+predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
+                            lambda = NULL, random_seed = 1, ...) {
 
     if(!("matrix" %in% class(x))) {
         cat("Msg: input x is not a matrix, try to convert type.\n")
@@ -42,7 +48,9 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL, lambda =
 
     
     if (is.null(t)){
-        print(paste(c("Predicting from time", longbet.fit$time), collapse = " "))
+        # Was longbet.fit$time, which only resolved when the caller happened to
+        # have named the fitted object longbet.fit in the global environment.
+        print(paste(c("Predicting from time", model$time), collapse = " "))
         t_con <-  matrix(rep(model$time, nrow(x)), nrow = nrow(x), byrow = T)
     } else {
         if (length(t) != ncol(z)){
@@ -88,7 +96,8 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL, lambda =
         beta_test <- as.matrix((S + 1) : max_post_trt)
         obj_beta = .Call(`_longbet_predict_beta`, beta_test,
             as.matrix(model$gp_info$t_values), model$gp_info$resid, model$gp_info$A_diag, model$gp_info$Sig_diag,
-            sigma, lambda)
+            sigma, lambda, !is.null(random_seed),
+            if (is.null(random_seed)) 0 else as.integer(random_seed))
         model$beta_values <- rbind(model$beta_values, obj_beta$beta)
     }
     for (i in 1:num_sweeps){

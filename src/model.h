@@ -158,6 +158,12 @@ public:
 
   void update_a_value(std::unique_ptr<State> &state);
 
+  // Conjugate Gibbs draw of the unit-level random intercepts gamma_i and of
+  // the standard deviation of their prior.
+  void update_random_intercept(std::unique_ptr<State> &state);
+
+  void update_sigma_gamma(std::unique_ptr<State> &state);
+
   void update_b_values(std::unique_ptr<State> &state);
 
   void update_time_coef(std::unique_ptr<State> &state, std::unique_ptr<X_struct> &x_struct, matrix<size_t> &sorder_std, std::vector<double> &resid, std::vector<double> &diag, std::vector<double> &sig, std::vector<double> &beta);

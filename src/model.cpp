@@ -304,6 +304,79 @@ void longbetModel::predict_std(const double *Xtestpointer, const double *tpointe
 
 // updates parameter a
 // called from mcmc_loop_xbcf in xbcf_mcmc_loop.cpp
+// Conjugate draw of the unit-level random intercepts.
+//
+// The model is  y_it = a*mu_it + b_{z}*beta_it*tau_it + gamma_i + eps_it,
+// with gamma_i ~ N(0, sigma_gamma^2) and eps_it ~ N(0, sigma_{z_it}^2).
+// Conditional on everything else the residual r_it = y_it - a*mu_it -
+// b*beta_it*tau_it equals gamma_i + eps_it, so each gamma_i has an exact
+// independent Gaussian full conditional. Cost is O(n * T).
+//
+// Note that gamma_i is drawn *conditional on the current treatment fit*, so a
+// unit's post-treatment periods do not drag its baseline upward the way naive
+// within-unit demeaning would. Units observed only under treatment have no
+// information separating gamma_i from tau, and the prior is what holds them
+// apart; the R wrapper warns when that happens.
+void longbetModel::update_random_intercept(std::unique_ptr<State> &state)
+{
+  if (!state->random_intercept) return;
+
+  const double sig02 = pow(state->sigma_vec[0], 2);
+  const double sig12 = pow(state->sigma_vec[1], 2);
+  const double prior_prec = (state->sigma_gamma > 0) ?
+      1.0 / pow(state->sigma_gamma, 2) : 0.0;
+
+  std::normal_distribution<double> normal_samp(0.0, 1.0);
+
+  for (size_t i = 0; i < state->n_y; i++)
+  {
+    double prec = prior_prec;
+    double wsum = 0.0;
+
+    for (size_t j = 0; j < state->p_y; j++)
+    {
+      const bool treated = (*(state->z + j * state->n_y + i) == 1);
+      const double s2 = treated ? sig12 : sig02;
+      const double b  = treated ? state->b_vec[1] : state->b_vec[0];
+
+      // Residual against the *original* outcome, i.e. gamma_i is still in it.
+      const double r = state->y_orig[j * state->n_y + i]
+                     - state->a * state->mu_fit[i][j]
+                     - b * state->beta_fit[i][j] * state->tau_fit[i][j];
+
+      prec += 1.0 / s2;
+      wsum += r / s2;
+    }
+
+    const double post_var  = 1.0 / prec;
+    const double post_mean = wsum * post_var;
+    state->gamma[i] = post_mean + sqrt(post_var) * normal_samp(state->gen);
+  }
+
+  // Everything downstream reads y through state->y_std.
+  state->refresh_y_work();
+}
+
+// sigma_gamma^2 | gamma ~ InvGamma(a + n/2, b + sum(gamma^2)/2).
+void longbetModel::update_sigma_gamma(std::unique_ptr<State> &state)
+{
+  if (!state->random_intercept) return;
+
+  double ss = 0.0;
+  for (size_t i = 0; i < state->n_y; i++)
+  {
+    ss += state->gamma[i] * state->gamma[i];
+  }
+
+  const double shape = state->gamma_prior_a + 0.5 * (double)state->n_y;
+  const double rate  = state->gamma_prior_b + 0.5 * ss;
+
+  // std::gamma_distribution is parameterised by (shape, scale).
+  std::gamma_distribution<double> gamma_samp(shape, 1.0 / rate);
+  const double prec = gamma_samp(state->gen);
+  state->sigma_gamma = 1.0 / sqrt(prec);
+}
+
 void longbetModel::update_a_value(std::unique_ptr<State> &state)
 {
   std::normal_distribution<double> normal_samp(0.0, 1.0);
@@ -468,7 +541,13 @@ void longbetModel::update_time_coef(std::unique_ptr<State> &state, std::unique_p
   arma::vec scale;
   svd(U, scale, V, var);
 
-  arma::mat L = U * diagmat(scale);
+  // A factor L of a covariance matrix has to satisfy L * L' = var. With
+  // var = U * diag(scale) * U', that is L = U * diag(sqrt(scale)); using
+  // diag(scale) makes the sampled covariance U * diag(scale^2) * U', which
+  // here is orders of magnitude too small and collapses the beta draw onto
+  // its conditional mean. clamp() guards against tiny negative eigenvalues
+  // returned by the SVD of a numerically semi-definite matrix.
+  arma::mat L = U * diagmat(sqrt(arma::clamp(scale, 0.0, arma::datum::inf)));
   // mean
   arma::mat res_vec(t_size, 1);
   for (size_t i = 0; i < t_size; i++){
@@ -566,7 +645,8 @@ void longbetModel::predict_beta(std::vector<double> &beta,
   arma::vec s;
   svd(U, s, V, var);
 
-  arma::mat L = U * diagmat(s);
+  // See update_time_coef: the covariance factor is U * diag(sqrt(s)).
+  arma::mat L = U * diagmat(sqrt(arma::clamp(s, 0.0, arma::datum::inf)));
 
   std::normal_distribution<double> normal_samp(0.0, 1.0);
   arma::mat draws(te_size, 1);

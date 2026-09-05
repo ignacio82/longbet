@@ -25,6 +25,8 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     mtry = 0L, n_min = 10,
                     sig_knl = 1, lambda_knl = 1,
                     split_time_ps = TRUE, split_time_trt = TRUE,
+                    random_intercept = TRUE,
+                    gamma_prior_a = 1, gamma_prior_b = 0.1,
                     ps = NULL) {
 
     if(!("matrix" %in% class(x))){
@@ -84,6 +86,20 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     # if (split_time_trt){
     #     stop("Can not handle split time on treatment tree with staggered adoption yet. \n")
     # }
+
+    # A unit that is treated in every observed period carries no information
+    # separating its own level from the treatment effect, so gamma_i and tau
+    # are only held apart by the prior. Warn rather than fail: the fit is still
+    # usable, but those units' effects are prior-driven.
+    if (random_intercept) {
+        always_treated <- sum(rowSums(z) == ncol(z))
+        if (always_treated > 0) {
+            warning(always_treated, " unit(s) are treated in every period. ",
+                    "With random_intercept = TRUE their unit effect and their ",
+                    "treatment effect are separated only by the prior.",
+                    call. = FALSE)
+        }
+    }
 
     # get post-treatment time matrix
     get_trt_time <- function(z_vec, t){
@@ -248,13 +264,23 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     split_time_ps = split_time_ps, 
                     split_time_trt = split_time_trt,
                     sig_knl = sig_knl, 
-                    lambda_knl = lambda_knl)
+                    lambda_knl = lambda_knl,
+                    random_intercept = random_intercept,
+                    gamma_prior_a = gamma_prior_a,
+                    gamma_prior_b = gamma_prior_b)
     class(obj) = "longbet"
 
     obj$time = t_con
     obj$t0 = t0
     obj$sdy = sdy
     obj$meany = meany
+
+    # The sampler works on the standardized outcome; return the unit effects on
+    # the scale the user handed in. gamma_draws is [n x num_sweeps] in the row
+    # order of x, so post-burnin unit effects are
+    #   rowMeans(fit$gamma_draws[, (num_burnin + 1):num_sweeps]).
+    obj$gamma_draws = obj$gamma_draws * sdy
+    obj$sigma_gamma_draws = obj$sigma_gamma_draws * sdy
 
     # obj$beta_draws = obj$beta_draws[, (num_burnin+1):num_sweeps]
     return(obj)

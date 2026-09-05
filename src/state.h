@@ -26,6 +26,19 @@ public:
     std::vector<double> t;
     std::vector<double> unique_t;
 
+    // ---- unit-level random intercept ---------------------------------
+    // gamma_i soaks up the part of a unit's level that the prognostic
+    // forest cannot reconstruct from the time-invariant covariates X_i.
+    // y_work = y_orig - gamma_i is what every other part of the sampler
+    // reads through y_std, so no other update needs to know gamma exists.
+    bool random_intercept;
+    std::vector<double> gamma;        // length n_y
+    double sigma_gamma;               // sd of the gamma prior
+    double gamma_prior_a;             // inverse-gamma shape for sigma_gamma^2
+    double gamma_prior_b;             // inverse-gamma rate  for sigma_gamma^2
+    std::vector<double> y_orig;       // standardized outcome as supplied
+    std::vector<double> y_work;       // y_orig - gamma_i
+
     // Random
     std::vector<double> prob;
     std::random_device rd;
@@ -131,6 +144,19 @@ public:
         }
     }
 
+    // Rebuild the outcome the forests see after gamma changes.
+    void refresh_y_work()
+    {
+        for (size_t j = 0; j < this->p_y; j++)
+        {
+            for (size_t i = 0; i < this->n_y; i++)
+            {
+                this->y_work[j * this->n_y + i] =
+                    this->y_orig[j * this->n_y + i] - this->gamma[i];
+            }
+        }
+    }
+
     void update_sigma(double sigma)
     {
         this->sigma = sigma;
@@ -191,7 +217,18 @@ public:
         this->num_trees_vec = num_trees_vec;  // stays the same even for vector
         this->num_sweeps = num_sweeps;
         this->sample_weights_flag = sample_weights_flag;
-        this->y_std = y_std;
+
+        // Own a mutable copy of the outcome and hand every consumer a
+        // pointer to it. With random_intercept off, y_work == y_orig and
+        // the sampler is bit-for-bit the original one.
+        this->y_orig.assign(y_std, y_std + N * p_y);
+        this->y_work = this->y_orig;
+        this->y_std  = this->y_work.data();
+        this->gamma  = std::vector<double>(N, 0.0);
+        this->random_intercept = false;
+        this->sigma_gamma      = 1.0;   // diffuse start, adapts after sweep 1
+        this->gamma_prior_a    = 1.0;
+        this->gamma_prior_b    = 0.1;
         this->max_depth = max_depth;
         this->burnin = burnin;
         this->ini_var_yhat = ini_var_yhat;

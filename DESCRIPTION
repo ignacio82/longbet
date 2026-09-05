@@ -1,13 +1,16 @@
 Package: longbet
 Type: Package
 Title: longbet: Bayesian Ensemble Trees for Causal Inference on Longitudinal Data
-Version: 0.1.2
-Date: 2022-06-06
+Version: 0.2.0
+Date: 2026-09-05
 Author: Meijia Wang, P. Richard Hahn, Ignacio Martinez
 Maintainer: Meijia Wang <maggiew614@gmail.com>
 Description: Time-varying conditional average treatment effect estimation with a 
   tree-based method providing separate regularization for the treatment and 
-  prognostic terms.
+  prognostic terms. This fork adds unit-level random intercepts, fixes the
+  covariance factorisation used when sampling and extrapolating the shared
+  time factor, and makes the Gaussian process projection reproducible.
+URL: https://github.com/ignacio82/longbet
 License: Apache License (== 2.0)
 Imports: Rcpp (>= 0.12.13)
 LinkingTo: Rcpp, RcppArmadillo

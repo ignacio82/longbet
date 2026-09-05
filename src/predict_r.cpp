@@ -73,7 +73,8 @@ Rcpp::List predict_longbet(arma::mat X, arma::mat t,
 // [[Rcpp::export]]
 Rcpp::List predict_beta(arma::mat t_test, arma::mat t_train,
     arma::mat res, arma::mat A_diag, arma::mat Sig_diag,
-    double sig_knl, double lambda_knl)
+    double sig_knl, double lambda_knl,
+    bool set_random_seed = false, size_t random_seed = 0)
 {
     size_t tr_size = t_train.n_rows;
     size_t te_size = t_test.n_rows;
@@ -127,8 +128,12 @@ Rcpp::List predict_beta(arma::mat t_test, arma::mat t_train,
     std::vector<double> res_vec(tr_size);
 
     // output
+    // The projection is a draw, not a deterministic map, so it needs a seed
+    // the caller can fix. Without one the forecast region of a fit changes
+    // every time predict() is called, which makes analyses irreproducible.
     std::random_device rd;
-    std::mt19937 gen = std::mt19937(rd());;
+    std::mt19937 gen = set_random_seed ? std::mt19937(random_seed)
+                                       : std::mt19937(rd());
     std::vector<double> beta_std(te_size);
     Rcpp::NumericMatrix beta(te_size, num_sweeps);
 
