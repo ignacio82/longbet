@@ -1,4 +1,5 @@
 #include "tree.h"
+#include <limits>
 // #include <RcppArmadilloExtensions/sample.h>
 #include <chrono>
 #include <cstddef>
@@ -750,7 +751,8 @@ void BART_likelihood_all(std::unique_ptr<split_info> &split_info,
     if (control_split_t){
         loglike_t_size = split_info->s_values.size();
         for (size_t a = 0; a < split_info->tv_alive.size(); a++){
-            tv_block_size[a] = split_info->tv_alive[a].size();
+            tv_block_size[a] = cellvar_candidates(split_info->tv_alive[a].size(),
+                                                  state->n_cutpoints).size();
             loglike_t_size += tv_block_size[a];
         }
     } else {
@@ -912,8 +914,17 @@ void BART_likelihood_all(std::unique_ptr<split_info> &split_info,
                    split_var < split_info->tv_alive.size())
             {
                 ind -= block_len;
-                block_len = split_info->tv_alive[split_var].size();
+                block_len = cellvar_candidates(
+                    split_info->tv_alive[split_var].size(), state->n_cutpoints).size();
                 split_var += 1;
+            }
+            // On a time-varying axis the index counts candidates, not values;
+            // map it back to a position in the alive value set.
+            if (split_var > 0)
+            {
+                std::vector<size_t> cand = cellvar_candidates(
+                    split_info->tv_alive[split_var - 1].size(), state->n_cutpoints);
+                ind = cand[std::min(ind, cand.size() - 1)];
             }
             split_point = ind;
             // for (size_t i = 0; i < (x_struct->t_variable_ind.size() - 1); i++)
@@ -991,8 +1002,17 @@ void BART_likelihood_all(std::unique_ptr<split_info> &split_info,
                    split_var < split_info->tv_alive.size())
             {
                 ind -= block_len;
-                block_len = split_info->tv_alive[split_var].size();
+                block_len = cellvar_candidates(
+                    split_info->tv_alive[split_var].size(), state->n_cutpoints).size();
                 split_var += 1;
+            }
+            // On a time-varying axis the index counts candidates, not values;
+            // map it back to a position in the alive value set.
+            if (split_var > 0)
+            {
+                std::vector<size_t> cand = cellvar_candidates(
+                    split_info->tv_alive[split_var - 1].size(), state->n_cutpoints);
+                ind = cand[std::min(ind, cand.size() - 1)];
             }
             split_point = ind;
             // for (size_t i = 0; i < (x_struct->t_variable_ind.size() - 1); i++)
@@ -1123,6 +1143,34 @@ tree *tree_pointer)
     }
 }
 
+// Which of a cell-level axis's alive values are offered as cutpoints.
+//
+// The time axis has a handful of distinct values, so every one of them can be
+// a candidate. A time-varying covariate can have one per cell, and offering
+// all of them is wrong twice over: the candidate count decides how often a
+// variable is chosen, so a continuous covariate with n * T distinct values
+// would swamp an x column with n_cutpoints, and the likelihood loop is
+// O(candidates * cells), which makes a fit quadratic in the panel size. The
+// x path has always subsampled to n_cutpoints; this does the same, spreading
+// the candidates evenly through the sorted alive values.
+std::vector<size_t> cellvar_candidates(size_t n_vals, size_t n_cutpoints)
+{
+    std::vector<size_t> idx;
+    if (n_vals < 2) return idx;
+    const size_t n_cand = n_vals - 1;   // a cut after every value but the last
+    if (n_cand <= n_cutpoints)
+    {
+        for (size_t s = 0; s < n_cand; s++) idx.push_back(s);
+        return idx;
+    }
+    for (size_t k = 1; k <= n_cutpoints; k++)
+    {
+        idx.push_back((size_t)((double)k * n_cand / (double)(n_cutpoints + 1)));
+    }
+    idx.erase(std::unique(idx.begin(), idx.end()), idx.end());
+    return idx;
+}
+
 // Candidate cutpoints on a time-varying covariate. Identical in structure to
 // calculate_loglikelihood_time -- accumulate the cells at or below each alive
 // value and score the resulting two-way split -- but reading the covariate
@@ -1134,34 +1182,43 @@ std::unique_ptr<X_struct> &x_struct, std::unique_ptr<split_info> &split_info,
 std::unique_ptr<State> &state, tree *tree_pointer)
 {
     const std::vector<double> &vals = split_info->tv_alive[axis - 1];
-    if (vals.size() < 2) return;   // nothing to cut
+    const std::vector<size_t> cand = cellvar_candidates(vals.size(), state->n_cutpoints);
+    if (cand.size() == 0) return;
 
     const double *cell = x_struct->cell_ptr(axis);
 
     std::vector<double> temp_suff_stat(tree_pointer->suff_stat.size());
     std::fill(temp_suff_stat.begin(), temp_suff_stat.end(), 0.0);
 
-    for (size_t s = 0; s < vals.size() - 1; s++)
+    // Accumulate cells whose value sits between the previous candidate cut and
+    // this one, so temp_suff_stat is the running left-hand side and each cell
+    // is counted once across the whole loop.
+    double prev = -std::numeric_limits<double>::infinity();
+    for (size_t k = 0; k < cand.size(); k++)
     {
+        const double cut = vals[cand[k]];
+
         for (auto i : split_info->Xorder_std[0])
         {
             if (split_info->sorder_std[i].size() == 0) { continue; }
             for (auto j : split_info->sorder_std[i])
             {
-                if (cell[i + j * state->n_y] == vals[s])
+                const double v = cell[i + j * state->n_y];
+                if (v > prev && v <= cut)
                 {
                     model->incSuffStat(state, i, j, temp_suff_stat);
                 }
             }
         }
+        prev = cut;
 
-        loglike[loglike_start + s] =
+        loglike[loglike_start + k] =
             model->likelihood(temp_suff_stat, tree_pointer->suff_stat, true, false, state)
           + model->likelihood(temp_suff_stat, tree_pointer->suff_stat, false, false, state);
 
-        if (loglike[loglike_start + s] > loglike_max)
+        if (loglike[loglike_start + k] > loglike_max)
         {
-            loglike_max = loglike[loglike_start + s];
+            loglike_max = loglike[loglike_start + k];
         }
     }
 }

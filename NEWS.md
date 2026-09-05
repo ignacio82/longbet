@@ -1,3 +1,33 @@
+# longbet 0.5.1
+
+## Fixed: a continuous time-varying covariate made fits quadratic
+
+0.5.0 offered every distinct value of a time-varying covariate as a candidate
+cutpoint. That is right for the time axis, which has a handful of values, and
+wrong twice over for a covariate that can take one value per cell.
+
+The likelihood loop is `O(candidates * cells)`, so a continuous covariate made
+it `O((n * T)^2)`: on an 800 by 10 panel a fit went from 0.5 seconds to 36.7,
+and the cost grows with the square of the panel. And because the number of
+candidates is what decides how often a variable gets picked, a covariate with
+`n * T` distinct values would outvote an `x` column with `n_cutpoints` on
+candidate count alone, regardless of fit.
+
+Candidates on a cell-level axis are now capped at `n_cutpoints` and spread
+evenly through the node's alive values, which is what the `x` path has always
+done. The same 800 by 10 fit takes 1.0 second, and the sampler is still
+bit-identical to 0.4.0 when no time-varying covariate is supplied.
+
+Verified on a covariate with 18,000 distinct values and a true effect that
+steps at `W > 0.6`:
+
+| | residual SD (truth 0.4) | CATT below | above | RMSE |
+|---|---|---|---|---|
+| covariate withheld | 0.948 | 1.28 | 1.30 | 0.976 |
+| covariate supplied | 0.412 | **0.49** | **2.48** | **0.043** |
+
+(truth: 0.5 below the threshold, 2.5 above)
+
 # longbet 0.5.0
 
 ## New: time-varying covariates

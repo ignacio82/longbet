@@ -308,4 +308,38 @@ ok("an n by t by k array is accepted",
                          num_burnin = 4, num_trees_pr = 3, num_trees_trt = 3),
                  silent = TRUE), "try-error"))
 
+
+
+# ---- 16. a *continuous* time-varying covariate --------------------------
+# The candidate cutpoints on a cell-level axis have to be capped the way the x
+# path caps them. Offering one per distinct value makes the likelihood loop
+# quadratic in the panel and lets a continuous covariate outvote every x column
+# purely on candidate count.
+cat("\n-- continuous time-varying covariate --\n")
+set.seed(88)
+Wc <- matrix(runif(n * Tn), n, Tn)
+tau_c <- (0.5 + 2.0 * (Wc > 0.6)) * (S > 0)
+y_c <- matrix(2 * x1, n, Tn) + 3.0 * Wc + tau_c +
+       matrix(rnorm(n * Tn, 0, 0.4), n, Tn)
+
+el <- system.time({
+  f_c <- longbet(y = y_c, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+                 x_tv = list(Wc), x_tv_trt = list(Wc), num_sweeps = 60,
+                 num_burnin = 20, num_trees_pr = 15, num_trees_trt = 15,
+                 random_intercept = FALSE)
+  p_c <- predict.longbet(f_c, x, x, z, t = 1:Tn, x_tv = list(Wc),
+                         x_tv_trt = list(Wc), random_seed = 1)
+})[3]
+ct_c <- get_catt(p_c)$catt
+ok("a covariate with one distinct value per cell stays affordable",
+   el < 120, sprintf("(%.0f s for %d distinct values)", el,
+                     length(unique(as.vector(Wc)))))
+ok("the residual SD comes back to the truth", abs(resid_sd(f_c) - 0.4) < 0.15,
+   sprintf("(%.3f)", resid_sd(f_c)))
+ok("the threshold in a continuous cell-level covariate is found",
+   abs(mean(ct_c[z == 1 & Wc <= 0.6]) - 0.5) < 0.25 &&
+   abs(mean(ct_c[z == 1 & Wc >  0.6]) - 2.5) < 0.25,
+   sprintf("(%.2f below, %.2f above; truth 0.5 and 2.5)",
+           mean(ct_c[z == 1 & Wc <= 0.6]), mean(ct_c[z == 1 & Wc > 0.6])))
+
 cat("\nAll tests passed.\n")

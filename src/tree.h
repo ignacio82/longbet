@@ -270,6 +270,9 @@ std::ostream &operator<<(std::ostream &, const tree &);
 
 // void predict_from_datapointers(size_t tree_ind, Model *model, std::unique_ptr<State> &state, std::unique_ptr<X_struct> &x_struct);
 
+// Candidate cutpoints offered on a cell-level axis, capped at n_cutpoints.
+std::vector<size_t> cellvar_candidates(size_t n_vals, size_t n_cutpoints);
+
 void getThetaForObs_Outsample(std::vector<double> &output, tree &tree, size_t x_index, size_t t_index, const double *Xtest, const double *tpointer, size_t N_Xtest, size_t p, const std::vector<const double *> *tv = 0);
 
 void getThetaForObs_Outsample_ave(matrix<double> &output, std::vector<tree> &tree, size_t x_index, const double *Xtest, size_t N_Xtest, size_t p);
