@@ -1,11 +1,14 @@
 # Bayesian Ensemble Trees for Causal Inference on Longitudinal Data (LongBet)
 
 > **This is a fork of [google/longbet](https://github.com/google/longbet).**
-> It adds unit-level random intercepts, fixes the covariance factorisation used
-> when sampling and extrapolating the shared time factor, and makes the
-> Gaussian process projection reproducible. See [NEWS.md](NEWS.md) for what
-> changed, why, and what it measures. Worked example:
-> [Business Data Science, LongBet chapter](https://book.martinez.fyi/longbet.html).
+> It adds unit-level random intercepts, unbalanced-panel support, binary
+> (probit) outcomes and a non-zero-mean Gaussian process; it fixes the
+> covariance factorisation used when sampling and extrapolating the shared time
+> factor, makes regularization independent of the units of the outcome, and
+> makes the projection reproducible. [NEWS.md](NEWS.md) has the rationale and
+> the measurements for each, including the two changes that were implemented,
+> measured, and then left switched off because they made things worse. Worked
+> example: [Business Data Science, LongBet chapter](https://book.martinez.fyi/longbet.html).
 
 ## About
 
@@ -41,7 +44,10 @@ gamma_prior_a = 1, gamma_prior_b = 0.1,
 tau_pr = NULL, tau_trt = NULL,
 max_depth = 50, num_cutpoints = 20,
 a_scaling = TRUE, b_scaling = FALSE,
-random_seed = 0, parallel = TRUE, verbose = FALSE)
+random_seed = 0, parallel = TRUE, verbose = FALSE,
+outcome = c("continuous", "binary"),
+gp_constant_mean = TRUE,
+ar1_errors = FALSE, rho_max = 0.95, sigma_u_init = 0.2)
 ```
 
 ### Arguments
@@ -66,8 +72,23 @@ gamma_prior_a, gamma_prior_b: inverse-gamma shape and rate for the random-interc
 random_seed: seed for the sampler. `longbet()` ignores R's RNG state, so this is the only way to get independent runs; vary it to run several chains and measure Monte Carlo error.
 tau_pr, tau_trt: leaf variance priors on the **standardized** outcome scale (defaults 0.6/num_trees_pr and 0.1/num_trees_trt).
 
+outcome: "continuous" (Gaussian) or "binary" (probit by Albert-Chib augmentation; effects come back on the probit scale).
+gp_constant_mean: give the time-factor Gaussian process a constant mean estimated from the data rather than a mean of zero. Only matters when extrapolating, where a zero mean makes long projections revert to "no effect" because the prior says so.
+ar1_errors: add a transitory AR(1) error on top of the unit intercept. Off by default, and see NEWS.md before turning it on -- it recovers rho accurately and makes conditional effects worse.
+
+`y` may contain `NA` for periods in which a unit was not observed; those cells
+are drawn from their full conditional each sweep rather than dropped.
+
 The Gaussian process projection in `predict.longbet()` is a draw, not a
-calculation; pass its own `random_seed` there to fix it.
+calculation; pass its own `random_seed` there to fix it. `predict.longbet()`
+returns `muhats0` (the fitted outcome with the unit held untreated) alongside
+`tauhats`, so the two potential outcomes are `muhats0` and
+`muhats0 + tauhats` -- or `pnorm()` of each for a binary fit.
+
+Do not read a trace of `beta_values` as a convergence diagnostic: the treatment
+term is `b * beta_S * nu(X, S, t)` and only the product is identified. Use
+`get_att()$att_full`, which is the average effect by time-since-adoption for
+every post-burn-in sweep.
 
 ### See Also
 

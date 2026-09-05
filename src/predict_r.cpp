@@ -74,7 +74,8 @@ Rcpp::List predict_longbet(arma::mat X, arma::mat t,
 Rcpp::List predict_beta(arma::mat t_test, arma::mat t_train,
     arma::mat res, arma::mat A_diag, arma::mat Sig_diag,
     double sig_knl, double lambda_knl,
-    bool set_random_seed = false, size_t random_seed = 0)
+    bool set_random_seed = false, size_t random_seed = 0,
+    Rcpp::Nullable<Rcpp::NumericVector> beta_mean = R_NilValue)
 {
     size_t tr_size = t_train.n_rows;
     size_t te_size = t_test.n_rows;
@@ -137,6 +138,15 @@ Rcpp::List predict_beta(arma::mat t_test, arma::mat t_train,
     std::vector<double> beta_std(te_size);
     Rcpp::NumericMatrix beta(te_size, num_sweeps);
 
+    // Per-sweep constant mean of the GP. Absent (or all zero) reproduces the
+    // zero-mean projection.
+    std::vector<double> bmean(num_sweeps, 0.0);
+    if (beta_mean.isNotNull())
+    {
+        Rcpp::NumericVector bm(beta_mean);
+        for (size_t i = 0; i < num_sweeps && i < (size_t)bm.size(); i++) bmean[i] = bm[i];
+    }
+
     for (size_t sweeps = 0; sweeps < num_sweeps; sweeps++)
     {
         for (size_t i = 0; i < tr_size; i++)
@@ -146,7 +156,7 @@ Rcpp::List predict_beta(arma::mat t_test, arma::mat t_train,
             res_vec[i] = res(i, sweeps);
         }
 
-        model->predict_beta(beta_std, res_vec, a_vec, sig_vec, Sigma_tr_std, Sigma_te_std, Sigma_tt_std, gen);
+        model->predict_beta(beta_std, res_vec, a_vec, sig_vec, Sigma_tr_std, Sigma_te_std, Sigma_tt_std, gen, bmean[sweeps]);
 
         for (size_t i = 0; i < te_size; i++)
         {

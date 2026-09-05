@@ -164,6 +164,14 @@ public:
 
   void update_sigma_gamma(std::unique_ptr<State> &state);
 
+  // Data augmentation: unobserved outcomes in an unbalanced panel, and the
+  // latent normal behind a binary outcome. Both redraw y at the top of a
+  // sweep, so they share one entry point.
+  void draw_latent_outcome(std::unique_ptr<State> &state);
+
+  // Forward-filter backward-sample the AR(1) error path, then its parameters.
+  void update_ar1(std::unique_ptr<State> &state);
+
   void update_b_values(std::unique_ptr<State> &state);
 
   void update_time_coef(std::unique_ptr<State> &state, std::unique_ptr<X_struct> &x_struct, matrix<size_t> &sorder_std, std::vector<double> &resid, std::vector<double> &diag, std::vector<double> &sig, std::vector<double> &beta);
@@ -177,7 +185,7 @@ public:
   void predict_beta(std::vector<double> &beta,
     std::vector<double> &res_vec, std::vector<double> &a_vec, std::vector<double> &sig_vec, 
     matrix<double> &Sigma_tr_std, matrix<double> &Sigma_te_std, matrix<double> &Sigma_tt_std,
-    std::mt19937 &gen);
+    std::mt19937 &gen, double beta_mean = 0.0);
 };
 
 

@@ -10,7 +10,11 @@
 #'   projected region of the output changes between otherwise identical calls.
 #'   Pass NULL for a nondeterministic draw.
 #'
-#' @return A matrix for predicted prognostic effect and a matrix for predicted treatment effect. 
+#' @return A list with `tauhats` (the treatment effect, [n x t x draws]),
+#'   `muhats0` (the fitted outcome with the unit held untreated), `muhats`
+#'   (retained for backwards compatibility; see the note in the code) and the
+#'   Gaussian process pieces. For a binary fit these are on the probit scale,
+#'   so probabilities are `pnorm(muhats0)` and `pnorm(muhats0 + tauhats)`. 
 #' @export
 predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
                             lambda = NULL, random_seed = 1, ...) {
@@ -97,7 +101,8 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
         obj_beta = .Call(`_longbet_predict_beta`, beta_test,
             as.matrix(model$gp_info$t_values), model$gp_info$resid, model$gp_info$A_diag, model$gp_info$Sig_diag,
             sigma, lambda, !is.null(random_seed),
-            if (is.null(random_seed)) 0 else as.integer(random_seed))
+            if (is.null(random_seed)) 0 else as.integer(random_seed),
+            model$gp_info$beta_mean)
         model$beta_values <- rbind(model$beta_values, obj_beta$beta)
     }
     for (i in 1:num_sweeps){
@@ -112,10 +117,20 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
     class(obj) = "longbet.pred"
     
     obj$muhats <- array(NA, dim = c(n, p, num_sweeps - num_burnin))
+    obj$muhats0 <- array(NA, dim = c(n, p, num_sweeps - num_burnin))
     obj$tauhats <- array(NA, dim = c(n, p, num_sweeps - num_burnin))
     seq <- (num_burnin+1):num_sweeps
     for (i in seq) {
         obj$muhats[,, i - num_burnin] = matrix(obj_mu$preds[,i], n, p) * (model$a_draws[i]) + model$meany +  matrix(obj_tau$preds[,i], n, p) *  model$b_draws[i,1] * model$beta_draws[1, i]
+
+        # Fitted value with the unit held untreated. muhats above evaluates the
+        # treatment forest at the unit's *realised* time since adoption, so for
+        # a treated cell it is neither potential outcome; muhats0 evaluates it
+        # at S = 0 and is the untreated one. The treated potential outcome is
+        # muhats0 + tauhats. Neither includes the unit random intercept, which
+        # predict() cannot attach to rows of a new x -- add
+        # rowMeans(fit$gamma_draws[, post]) yourself for in-sample fits.
+        obj$muhats0[,, i - num_burnin] = matrix(obj_mu$preds[,i], n, p) * (model$a_draws[i]) + model$meany +  matrix(rep(obj_tau0$preds[,i], p), ncol = p) * model$b_draws[i,1] * model$beta_values[1, i]
         # obj$tauhats[,, i - num_burnin] = matrix(obj_tau$preds[,i], n, p) * (model$b_draws[i,2] * beta_preds[,,i] - model$b_draws[i,1] * model$beta_draws[1, i]) # * beta_preds[,,i]
         obj$tauhats[,, i - num_burnin] = model$b_draws[i,2] * beta_preds[,,i] * matrix(obj_tau$preds[,i], n, p)  - matrix(rep(model$b_draws[i,1] * model$beta_values[1, i] * obj_tau0$preds[,i], p), ncol = p)
         # TODO: change tauhat to b1 * beta_s * tau_s - b0 * beta_0 * tau_0 when tau can split on post-treatment time

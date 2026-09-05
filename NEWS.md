@@ -1,3 +1,149 @@
+# longbet 0.3.0
+
+Five further changes, each one recommended, implemented, and then *measured*.
+Two of them did not survive the measurement, and are reported here as such
+rather than quietly shipped as improvements.
+
+## New: a constant mean for the beta_S Gaussian process
+
+`gp_constant_mean = TRUE` (now the default) gives the process over
+time-since-adoption a constant mean estimated alongside everything else,
+instead of a mean of zero.
+
+**Why.** It only matters when extrapolating, and there it matters a lot. A
+zero-mean process reverts to *no treatment effect* once it is far enough past
+the observed window. That is a statement about the prior, not about the data,
+and it is rarely what anyone believes. With a constant mean the projection
+reverts to the level the observed trajectory settled at.
+
+**Measured**, on the staggered rollout from the LongBet chapter, projecting six
+weeks past a fourteen-week window whose true effect is flat near 10.7%:
+
+| lengthscale | RMSE, zero mean | RMSE, constant mean |
+|---|---|---|
+| 2  | 0.067 | **0.026** |
+| 5  | 0.031 | **0.016** |
+| 8  | **0.017** | 0.027 |
+| 12 | **0.010** | 0.023 |
+| 20 | **0.048** | 0.105 |
+
+The pathology is gone: at short lengthscales the zero-mean process forgets the
+data within a couple of periods and falls to zero, and the constant mean stops
+it. At long lengthscales the projection is data-dominated anyway and the extra
+pull is a cost, not a benefit. Average accuracy across the grid is a wash. It
+is the default because the failure it removes is systematic and severe while
+the one it introduces is mild, but `gp_constant_mean = FALSE` restores the old
+behaviour and is the better choice if you extrapolate with a long lengthscale.
+In-window results are unchanged either way.
+
+## New: unbalanced panels
+
+`y` may now contain `NA`. Cells with no observed outcome are drawn from their
+own full conditional at the top of every sweep, so the tree-growing code, the
+sufficient statistics, the variance draws and the Gaussian process update all
+continue to see a rectangular panel and none of them needed to change.
+Alternating `y_mis | theta` with `theta | y_obs, y_mis` is an ordinary Gibbs
+sampler on the joint posterior, so the extra uncertainty is carried rather than
+hidden. It is correct under missing at random. Units with no observed period at
+all are an error, not a warning.
+
+**Measured**: deleting 15% of the panel at random moves the ATT RMSE from
+0.0079 to 0.0086 and the residual SD from 0.2814 to 0.2813 against a truth of
+0.28. Dropping an eighth of the data costs almost nothing, which is the point:
+the alternative -- casewise deletion of whole units -- costs a great deal.
+
+## New: binary outcomes
+
+`outcome = "binary"` fits a probit by Albert-Chib augmentation. A latent normal
+is drawn each sweep, truncated to the half-line the observation implies, and
+sigma is held at 1 because the link is what fixes the scale. The same
+`draw_latent_outcome` hook carries this and the missing-data imputation; they
+are the same operation seen twice.
+
+The latent is centred at `qnorm(mean(y))` and the forests fit deviations from
+it, exactly as they do for a centred continuous outcome. Getting this wrong is
+not subtle: an early version left the forests seeded with an intercept equal to
+the observed *proportion*, and the fitted probabilities came out 0.62 against
+an observed 0.477 and stayed there no matter how long the chain ran.
+
+**Measured**, on a probit DGP with a heterogeneous latent-scale effect of 0.8
+for `x1 > 0` and 0.2 otherwise: the estimated conditional effects correlate
+0.94 with the truth, the fitted probability on untreated cells is 0.477 against
+an observed 0.477, and the counterfactual probability for treated units is
+0.512 against a true 0.507.
+
+Effects are returned on the **probit scale**. `predict.longbet()` now also
+returns `muhats0`, the fitted outcome with the unit held untreated, so the two
+potential outcomes are `pnorm(muhats0)` and `pnorm(muhats0 + tauhats)`.
+(`muhats` evaluates the treatment forest at the unit's realised time since
+adoption, so for a treated cell it is neither potential outcome. It is retained
+unchanged for backwards compatibility.)
+
+## New, and not recommended: AR(1) errors
+
+`ar1_errors = TRUE` adds a transitory autoregressive component,
+`y = fitted + gamma_i + u_it + eps_it` with `u_it = rho u_i,t-1 + e_it`. The
+latent path is sampled by forward-filter backward-sample, so conditional on it
+the forests still see an iid error and the conjugate leaf updates stay exact.
+This is why the path is sampled rather than the tree targets quasi-differenced:
+after a Prais-Winsten transform the fitted value at `(i,t)` is
+`mu(X_i,t) - rho*mu(X_i,t-1)`, a difference of two leaf values that sit in
+different leaves as soon as a tree splits on time, and the leaf sufficient
+statistics stop being sums over independent observations.
+
+It is off by default, and the measurements are the reason. On a panel with a
+true `rho` of 0.7:
+
+| | CATT RMSE | 95% interval containment | recovered rho |
+|---|---|---|---|
+| `ar1_errors = FALSE` | **0.120** | **0.938** | -- |
+| `ar1_errors = TRUE`  | 0.152 | 0.538 | 0.76 |
+
+and on a panel with no serial correlation at all, 0.058 / 0.877 against
+0.067 / 0.687. It recovers `rho` accurately in both cases and makes the
+conditional treatment effects worse in both cases. More sweeps do not fix it:
+400 gives the same picture. The reason is the one that motivated bounding
+`rho` in the first place -- a smooth unit-specific path can absorb a
+unit-specific treatment effect, and here it does. The average effect survives
+(the ATT is within 0.03 of the truth throughout, because it is pooled across
+units through `beta_S`); the conditional effects do not.
+
+Use it to *measure* whether your residuals are genuinely autoregressive, and
+then turn it off to estimate effects. If the dependence you find is a permanent
+per-unit offset rather than a decaying one -- which is the common case, and the
+one that costs the most -- `random_intercept` removes it exactly and improves
+everything.
+
+## Resolved: the "non-converging sigma and b" note
+
+`state.h` carried a note saying that the residual should use `beta_fit` rather
+than `beta_t` but that doing so "leads to non-converging sigma and b values".
+The cause was the covariance factorisation fixed in 0.2.0, which pinned `beta`
+to its conditional mean. With that repaired, `b_scaling = TRUE` gives a
+stationary sigma (sd 0.0006 with no drift across 200 sweeps), `b0` and `b1`
+that settle at 0.35 and 0.60, and an ATT that is if anything slightly better
+(RMSE 0.0077 covering 14 of 14 event times, against 0.0079 and 13 of 14). The
+default is still `FALSE` -- that is one data-generating process, not a
+validation -- but the option now works and the note is gone.
+
+## Not done: constraining the beta_S scale
+
+An earlier draft of these notes proposed removing the scale ridge between
+`beta_S` and the treatment forest, so that `beta` could be interpreted and its
+trace read as a convergence diagnostic. On reflection that is the wrong thing
+to do. The treatment term is `b * beta_S * nu(X, S, t)`, and the redundant
+scalings are not an oversight -- they are the parameter expansion XBCF adopts
+precisely because it improves mixing of the quantities that *are* identified.
+Constraining `beta` would fight that, and every reported quantity is already
+invariant to the ridge.
+
+What the ridge does require is that nobody diagnose convergence on `beta`. That
+is now documented on `longbet()`'s return value, with a pointer to the
+identified alternative: `get_att()` returns `att_full`, the average effect by
+time-since-adoption for every post-burn-in sweep, and `get_catt()` the same per
+unit. On the chapter's fit the coefficient of variation across sweeps is 0.23
+for `beta` and 0.08 for the ATT it multiplies out to.
+
 # longbet 0.2.0
 
 This release is a fork of [google/longbet](https://github.com/google/longbet)

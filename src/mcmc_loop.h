@@ -36,5 +36,6 @@ void mcmc_loop_longbet(
   matrix<double> &A_diag_info,
   matrix<double> &Sig_diag_info,
   matrix<double> &gamma_xinfo,
-  std::vector<double> &sigma_gamma_draws
+  std::vector<double> &sigma_gamma_draws,
+  std::vector<double> &beta_mean_draws
   );

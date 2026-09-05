@@ -142,6 +142,14 @@ double &prob_leaf)
 // updates sigmas (new)
 void longbetModel::draw_sigma(std::unique_ptr<State> &state, size_t ind)
 {
+  // A probit has no free residual scale: the latent variance is what fixes
+  // the link, so sigma stays at 1 rather than being sampled.
+  if (state->binary_outcome)
+  {
+    state->update_sigma(1.0, ind);
+    return;
+  }
+
   double m1 = 0;
   double v1 = 0;
   double sigma;
@@ -340,9 +348,13 @@ void longbetModel::update_random_intercept(std::unique_ptr<State> &state)
       const double b  = treated ? state->b_vec[1] : state->b_vec[0];
 
       // Residual against the *original* outcome, i.e. gamma_i is still in it.
-      const double r = state->y_orig[j * state->n_y + i]
-                     - state->a * state->mu_fit[i][j]
-                     - b * state->beta_fit[i][j] * state->tau_fit[i][j];
+      double r = state->y_orig[j * state->n_y + i]
+               - state->a * state->mu_fit[i][j]
+               - b * state->beta_fit[i][j] * state->tau_fit[i][j];
+      if (state->random_intercept && state->ar1_errors)
+      {
+        r -= state->u[j * state->n_y + i];
+      }
 
       prec += 1.0 / s2;
       wsum += r / s2;
@@ -354,6 +366,217 @@ void longbetModel::update_random_intercept(std::unique_ptr<State> &state)
   }
 
   // Everything downstream reads y through state->y_std.
+  state->refresh_y_work();
+}
+
+// Draw a standard normal truncated to [a, infinity), by Robert's (1995)
+// algorithm: plain rejection when the bound is not binding, exponential
+// rejection when it is. No inverse CDF and no external dependency.
+static double rtruncnorm_lower(double a, std::mt19937 &gen)
+{
+  std::normal_distribution<double> norm(0.0, 1.0);
+  if (a <= 0.0)
+  {
+    // Acceptance probability is at least 1/2 here.
+    for (int it = 0; it < 1000; it++)
+    {
+      double x = norm(gen);
+      if (x >= a) return x;
+    }
+    return a;
+  }
+  const double alpha = 0.5 * (a + sqrt(a * a + 4.0));
+  std::exponential_distribution<double> expo(alpha);
+  std::uniform_real_distribution<double> unif(0.0, 1.0);
+  for (int it = 0; it < 1000; it++)
+  {
+    double x = a + expo(gen);
+    double rho = exp(-0.5 * (x - alpha) * (x - alpha));
+    if (unif(gen) <= rho) return x;
+  }
+  return a;
+}
+
+// Forward-filter backward-sample the AR(1) error path for every unit, then
+// draw its persistence and innovation variance.
+//
+// Per unit the model is a scalar linear Gaussian state space,
+//   u_t = rho * u_{t-1} + e_t,   e_t ~ N(0, sigma_u^2)
+//   r_t = u_t + eps_t,           eps_t ~ N(0, sigma_{z_it}^2)
+// with r_t the residual against everything except u, and a stationary start.
+// Cells with no observation contribute no update, so an unbalanced panel is
+// handled by skipping the correction step for them. Cost is O(n * T).
+//
+// rho is bounded well away from 1 on purpose. A near-random-walk u is smooth
+// enough in t to mimic a treatment effect that turns on at a known time, and
+// nothing else in the likelihood would object. The bound, plus the fact that
+// tau is pooled across units through beta_S while u is unit-specific, is what
+// keeps the latent path from eating the effect.
+void longbetModel::update_ar1(std::unique_ptr<State> &state)
+{
+  if (!state->ar1_errors) return;
+
+  const size_t n = state->n_y;
+  const size_t T = state->p_y;
+  const double su2 = state->sigma_u * state->sigma_u;
+  const double rho = state->rho;
+
+  if (su2 <= 0.0) return;
+
+  const double stat_var = su2 / std::max(1e-8, 1.0 - rho * rho);
+
+  std::normal_distribution<double> norm(0.0, 1.0);
+  std::vector<double> a(T), R(T), m(T), C(T);
+
+  double ss_num = 0.0, ss_den = 0.0, ss_innov = 0.0;
+  size_t n_innov = 0;
+
+  for (size_t i = 0; i < n; i++)
+  {
+    // ---- forward filter ----
+    for (size_t t = 0; t < T; t++)
+    {
+      const size_t k = t * n + i;
+      a[t] = (t == 0) ? 0.0 : rho * m[t - 1];
+      R[t] = (t == 0) ? stat_var : rho * rho * C[t - 1] + su2;
+
+      if (state->y_missing[k] == 1)
+      {
+        m[t] = a[t]; C[t] = R[t];          // nothing observed, just propagate
+        continue;
+      }
+
+      const bool treated = (*(state->z + k) == 1);
+      const double s2 = pow(treated ? state->sigma_vec[1] : state->sigma_vec[0], 2);
+      const double b  = treated ? state->b_vec[1] : state->b_vec[0];
+
+      // Residual against everything except u.
+      const double r = state->y_orig[k]
+                     - state->a * state->mu_fit[i][t]
+                     - b * state->beta_fit[i][t] * state->tau_fit[i][t]
+                     - state->gamma[i];
+
+      const double Q = R[t] + s2;
+      const double A = R[t] / Q;
+      m[t] = a[t] + A * (r - a[t]);
+      C[t] = R[t] * s2 / Q;
+    }
+
+    // ---- backward sample ----
+    double draw = m[T - 1] + sqrt(std::max(0.0, C[T - 1])) * norm(state->gen);
+    state->u[(T - 1) * n + i] = draw;
+    for (size_t t = T - 1; t-- > 0;)
+    {
+      const double B = (R[t + 1] > 0) ? rho * C[t] / R[t + 1] : 0.0;
+      const double h = m[t] + B * (draw - a[t + 1]);
+      const double H = std::max(0.0, C[t] * (1.0 - B * rho));
+      draw = h + sqrt(H) * norm(state->gen);
+      state->u[t * n + i] = draw;
+    }
+
+    // ---- sufficient statistics for rho and sigma_u ----
+    for (size_t t = 1; t < T; t++)
+    {
+      const double prev = state->u[(t - 1) * n + i];
+      const double cur  = state->u[t * n + i];
+      ss_num += cur * prev;
+      ss_den += prev * prev;
+      n_innov++;
+    }
+  }
+
+  // ---- rho | u, truncated to (-rho_max, rho_max) ----
+  if (ss_den > 0)
+  {
+    const double mean = ss_num / ss_den;
+    const double sd   = sqrt(su2 / ss_den);
+    double prop = mean + sd * norm(state->gen);
+    for (int tries = 0; tries < 50 && fabs(prop) >= state->rho_max; tries++)
+    {
+      prop = mean + sd * norm(state->gen);
+    }
+    if (fabs(prop) < state->rho_max) state->rho = prop;
+  }
+
+  // ---- sigma_u^2 | u, rho ~ InvGamma(1 + n_innov/2, 0.1 + SS/2) ----
+  for (size_t i = 0; i < n; i++)
+  {
+    for (size_t t = 1; t < T; t++)
+    {
+      const double e = state->u[t * n + i] - state->rho * state->u[(t - 1) * n + i];
+      ss_innov += e * e;
+    }
+  }
+  if (n_innov > 0)
+  {
+    const double shape = 1.0 + 0.5 * (double)n_innov;
+    const double rate  = 0.1 + 0.5 * ss_innov;
+    std::gamma_distribution<double> gam(shape, 1.0 / rate);
+    state->sigma_u = 1.0 / sqrt(gam(state->gen));
+  }
+}
+
+// Redraw the outcome at the top of a sweep.
+//
+// Two things happen here, and they are the same thing seen twice.
+//
+// Unobserved cells in an unbalanced panel are filled from their full
+// conditional, y_it | theta ~ N(a*mu + b_z*beta*tau + gamma_i, sigma_z^2), so
+// the tree-growing code, the sufficient statistics, the variance draws and the
+// Gaussian process update all run on a complete panel without modification.
+// The completed values are draws rather than point imputations, so the extra
+// uncertainty is carried rather than hidden. Alternating y_mis | theta with
+// theta | y_obs, y_mis is a valid Gibbs sampler on the joint posterior; it is
+// correct as long as missingness does not depend on the unobserved outcome
+// given the model.
+//
+// For a binary outcome the same hook carries Albert and Chib augmentation: the
+// latent normal is drawn truncated to the positive half-line when y = 1 and
+// the negative half-line when y = 0. With sigma held at 1 that makes the model
+// a probit, and everything downstream is unchanged.
+void longbetModel::draw_latent_outcome(std::unique_ptr<State> &state)
+{
+  if (!state->has_missing && !state->binary_outcome) return;
+
+  std::normal_distribution<double> normal_samp(0.0, 1.0);
+
+  for (size_t j = 0; j < state->p_y; j++)
+  {
+    for (size_t i = 0; i < state->n_y; i++)
+    {
+      const size_t k = j * state->n_y + i;
+      const bool missing = (state->y_missing[k] == 1);
+      if (!missing && !state->binary_outcome) continue;
+
+      const bool treated = (*(state->z + k) == 1);
+      const double sd = treated ? state->sigma_vec[1] : state->sigma_vec[0];
+      const double b  = treated ? state->b_vec[1] : state->b_vec[0];
+
+      const double fitted = state->a * state->mu_fit[i][j]
+                          + b * state->beta_fit[i][j] * state->tau_fit[i][j]
+                          + state->gamma[i]
+                          + (state->ar1_errors ? state->u[k] : 0.0);
+
+      if (state->binary_outcome && !missing)
+      {
+        // The sampler holds the latent minus binary_offset, so a success means
+        // centred > -offset rather than centred > 0. sd is 1 on this scale.
+        const double bound = -state->binary_offset - fitted;
+        if (state->y_binary[k] == 1)
+        {
+          state->y_orig[k] = fitted + rtruncnorm_lower(bound, state->gen);
+        }
+        else
+        {
+          state->y_orig[k] = fitted - rtruncnorm_lower(-bound, state->gen);
+        }
+      }
+      else
+      {
+        state->y_orig[k] = fitted + sd * normal_samp(state->gen);
+      }
+    }
+  }
   state->refresh_y_work();
 }
 
@@ -537,6 +760,14 @@ void longbetModel::update_time_coef(std::unique_ptr<State> &state, std::unique_p
   arma::mat var_inv = Sigma0_inv + Sigma_inv;
   arma::mat var = pinv(var_inv);
 
+  // Prior mean of beta_tilde = A * beta. With a zero-mean GP this is zero and
+  // everything below reduces to the original code.
+  arma::mat mu0(t_size, 1, arma::fill::zeros);
+  if (state->gp_constant_mean)
+  {
+    for (size_t i = 0; i < t_size; i++) mu0(i, 0) = diag[i] * state->beta_mean;
+  }
+
   arma::mat U, V;
   arma::vec scale;
   svd(U, scale, V, var);
@@ -553,7 +784,7 @@ void longbetModel::update_time_coef(std::unique_ptr<State> &state, std::unique_p
   for (size_t i = 0; i < t_size; i++){
     res_vec(i, 0) = resid[i];
   }
-  arma::mat mu = var * Sigma_inv * res_vec;
+  arma::mat mu = var * (Sigma_inv * res_vec + Sigma0_inv * mu0);
 
   std::normal_distribution<double> normal_samp(0.0, 1.0);
   arma::mat draws(t_size, 1);
@@ -567,6 +798,30 @@ void longbetModel::update_time_coef(std::unique_ptr<State> &state, std::unique_p
     // beta[i] = 1; // disable beta for debug
     beta[i] = beta_tilde(i, 0) / diag[i];
     state->beta_t[i] = beta[i];
+  }
+
+  // Draw the GP's constant mean from its own conditional. beta ~ N(m*1, K)
+  // with m ~ N(0, sig_knl^2) gives m | beta ~ N(S/P, 1/P) for
+  // P = 1/sig_knl^2 + 1'K^-1 1 and S = 1'K^-1 beta. The kernel's diagonal is
+  // sig_knl^2, which is where the prior variance comes from.
+  if (state->gp_constant_mean)
+  {
+    arma::mat K(t_size, t_size);
+    for (size_t i = 0; i < t_size; i++)
+      for (size_t j = 0; j < t_size; j++) K(i, j) = x_struct->cov_kernel[i][j];
+
+    arma::mat K_inv = pinv(K);
+    arma::mat one(t_size, 1, arma::fill::ones);
+    arma::mat beta_col(t_size, 1);
+    for (size_t i = 0; i < t_size; i++) beta_col(i, 0) = beta[i];
+
+    const double kernel_var = x_struct->cov_kernel[0][0];
+    const double prior_prec = (kernel_var > 0) ? 1.0 / kernel_var : 0.0;
+    const double prec = prior_prec + arma::as_scalar(one.t() * K_inv * one);
+    const double mean = arma::as_scalar(one.t() * K_inv * beta_col) / prec;
+
+    std::normal_distribution<double> mean_samp(0.0, 1.0);
+    state->beta_mean = mean + sqrt(1.0 / prec) * mean_samp(state->gen);
   }
 
   // // match beta_t to beta_fit
@@ -617,7 +872,7 @@ void longbetModel::set_state_status(std::unique_ptr<State> &state, size_t value,
 void longbetModel::predict_beta(std::vector<double> &beta,
   std::vector<double> &res_vec, std::vector<double> &a_vec, std::vector<double> &sig_vec, 
   matrix<double> &Sigma_tr_std, matrix<double> &Sigma_te_std, matrix<double> &Sigma_tt_std,
-  std::mt19937 &gen)
+  std::mt19937 &gen, double beta_mean)
 {
   vec a_diag = conv_to<vec>::from(a_vec);
   vec sig_diag = conv_to<vec>::from(sig_vec);
@@ -637,8 +892,13 @@ void longbetModel::predict_beta(std::vector<double> &beta,
   mat Sig = diagmat(sig_diag);
   mat Sig_inv = pinv(Sig + A * Sigma_tr * A.t());
   mat common_mat = Sigma_tt.t() * A.t() * Sig_inv;
+
+  // beta = beta_mean + f with f ~ GP(0, K), so condition on the residual after
+  // removing the mean's contribution and add it back to the prediction.
+  // beta_mean = 0 recovers the zero-mean GP exactly.
+  mat res_adj = res - beta_mean * a_diag;
   
-  mat mu = common_mat * res;
+  mat mu = beta_mean + common_mat * res_adj;
   mat var = Sigma_te - common_mat * A * Sigma_tt;
 
   arma::mat U, V;

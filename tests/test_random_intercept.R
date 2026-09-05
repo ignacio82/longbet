@@ -112,4 +112,62 @@ ok("same seed reproduces the fit", identical(s1$beta_values, s1b$beta_values))
 ok("different seed gives an independent fit",
    !identical(s1$beta_values, s2$beta_values))
 
+
+
+# ---- 7. unbalanced panel -----------------------------------------------
+cat("\n-- unbalanced panel --\n")
+y_na <- y
+set.seed(31); y_na[sample(length(y_na), round(0.15 * length(y_na)))] <- NA
+f_na <- suppressMessages(do.call(longbet,
+          modifyList(fit_args, list(y = y_na, random_intercept = TRUE))))
+ok("missing cells are counted", f_na$n_missing == sum(is.na(y_na)))
+ok("residual sd survives 15% missingness",
+   abs(resid_sd(f_na) - 0.3) < 0.12, sprintf("(%.3f)", resid_sd(f_na)))
+ok("ATT survives 15% missingness",
+   abs(att_of(f_na) - 1.5) < 0.2, sprintf("(%.3f)", att_of(f_na)))
+ok("a unit with no observed period is an error",
+   inherits(try({ yy <- y; yy[1, ] <- NA
+     suppressMessages(do.call(longbet, modifyList(fit_args, list(y = yy)))) },
+     silent = TRUE), "try-error"))
+
+# ---- 8. binary outcome (probit) ----------------------------------------
+cat("\n-- binary outcome --\n")
+set.seed(77)
+eta_b <- -0.3 + 0.9 * x1 + 1.2 * (S > 0)
+yb <- matrix(rbinom(n * Tn, 1, pnorm(eta_b)), n, Tn)
+fb <- longbet(y = yb, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+              outcome = "binary", num_sweeps = 80, num_burnin = 30,
+              num_trees_pr = 20, num_trees_trt = 20, random_intercept = FALSE)
+pb <- predict.longbet(fb, x, x, z, t = 1:Tn, random_seed = 1)
+ok("sigma is held at 1 on the probit scale", all(fb$sigma0_draws == 1))
+m0 <- apply(pb$muhats0, c(1, 2), mean)
+fitted_rate <- mean(pnorm(m0[z == 0]))
+ok("fitted probability matches the observed rate on untreated cells",
+   abs(fitted_rate - mean(yb[z == 0])) < 0.03,
+   sprintf("(%.3f vs %.3f)", fitted_rate, mean(yb[z == 0])))
+ok("latent-scale ATT recovers the true 1.2",
+   abs(mean(get_att(pb)$att) - 1.2) < 0.3,
+   sprintf("(%.3f)", mean(get_att(pb)$att)))
+ok("binary y must be 0/1",
+   inherits(try(longbet(y = y, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+                        outcome = "binary", num_sweeps = 5, num_burnin = 2),
+                silent = TRUE), "try-error"))
+
+# ---- 9. AR(1) errors recover rho ---------------------------------------
+cat("\n-- AR(1) errors --\n")
+set.seed(53); rho_true <- 0.7
+uu <- matrix(0, n, Tn); uu[, 1] <- rnorm(n, 0, 0.5 / sqrt(1 - rho_true^2))
+for (tt in 2:Tn) uu[, tt] <- rho_true * uu[, tt - 1] + rnorm(n, 0, 0.5)
+y_ar <- y + uu
+f_ar <- longbet(y = y_ar, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+                num_sweeps = 120, num_burnin = 40, num_trees_pr = 20,
+                num_trees_trt = 20, random_intercept = TRUE, ar1_errors = TRUE)
+ok("rho is recovered", abs(f_ar$rho - rho_true) < 0.15,
+   sprintf("(%.2f vs %.2f)", f_ar$rho, rho_true))
+ok("rho respects its bound", abs(f_ar$rho) < 0.95)
+f_no <- longbet(y = y_ar, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+                num_sweeps = 120, num_burnin = 40, num_trees_pr = 20,
+                num_trees_trt = 20, random_intercept = TRUE, ar1_errors = FALSE)
+ok("ar1_errors = FALSE leaves rho at zero", f_no$rho == 0)
+
 cat("\nAll tests passed.\n")

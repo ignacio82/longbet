@@ -1,6 +1,9 @@
 #' longbet model
 #'
-#' @param y An n by t matrix of outcome variables.
+#' @param y An n by t matrix of outcome variables. NA marks a period in which
+#'   a unit was not observed; such cells are drawn from their full conditional
+#'   at each sweep rather than dropped, so an unbalanced panel needs no
+#'   pre-processing. Units with no observed period at all are an error.
 #' @param x n by p input matrix of covariates. (If the covariates matrix is different for the prognostic and treatment term, please use longbet_full).
 #' @param x_trt n by p_trt input matrix of covariates for treatment trees
 #' @param z An n by t matrix of treatment assignments.
@@ -17,7 +20,17 @@
 #' @param split_time_ps whether to split on time variable in prognostic trees (default is TRUE)
 #' @param split_time_trt whether to split on time variable in treatment trees (default is FALSE)
 #'
-#' @return A fit file, which contains the draws from the model as well as parameter draws at each sweep.
+#' @return A fit object holding the tree ensembles and the per-sweep parameter
+#'   draws. Note that `beta_values` (the shared time factor) is *not*
+#'   separately identified: the treatment term enters as the product
+#'   b * beta_S * nu(X, S, t), and nothing in the likelihood pins down how a
+#'   common scale is divided between the three factors. That is deliberate --
+#'   the redundant scalings are the parameter expansion XBCF uses to improve
+#'   mixing -- but it means a trace of `beta_values` will wander even in a
+#'   perfectly converged run. Diagnose and report the identified quantity
+#'   instead: `get_att()` returns `att_full`, the average effect by
+#'   time-since-adoption for every post-burn-in sweep, and `get_catt()` does
+#'   the same per unit.
 #' @export
 longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     num_sweeps = 60, num_burnin = 20,
@@ -27,11 +40,17 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     split_time_ps = TRUE, split_time_trt = TRUE,
                     random_intercept = TRUE,
                     gamma_prior_a = 1, gamma_prior_b = 0.1,
+                    gp_constant_mean = TRUE,
+                    outcome = c("continuous", "binary"),
+                    ar1_errors = FALSE, rho_max = 0.95, sigma_u_init = 0.2,
                     tau_pr = NULL, tau_trt = NULL,
                     max_depth = 50, num_cutpoints = 20,
                     a_scaling = TRUE, b_scaling = FALSE,
                     random_seed = 0, parallel = TRUE, verbose = FALSE,
                     ps = NULL) {
+
+    outcome <- match.arg(outcome)
+    binary_outcome <- identical(outcome, "binary")
 
     if(!("matrix" %in% class(x))){
         cat("Msg: input x is not a matrix, try to convert type.\n")
@@ -52,6 +71,30 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
 
     if(any(dim(z) != dim(y))) {
         stop("Dimensions of response y and treatment z do not match. \n")
+    }
+
+    # Unbalanced panels. Cells with no observed outcome are marked and then
+    # completed inside the sampler, one draw per sweep, so the trees always see
+    # a rectangular panel. Treatment status z must still be known everywhere:
+    # whether a unit was treated in a week is a design fact, not an outcome.
+    y_miss <- is.na(y)
+    n_miss <- sum(y_miss)
+    if (n_miss > 0) {
+        if (any(is.na(z))) {
+            stop("z cannot contain NA: treatment status must be known even ",
+                 "in periods where the outcome is not observed. \n")
+        }
+        all_missing <- rowSums(y_miss) == ncol(y)
+        if (any(all_missing)) {
+            stop(sum(all_missing), " unit(s) have no observed outcome in any ",
+                 "period. Drop them before fitting. \n")
+        }
+        message("Unbalanced panel: ", n_miss, " of ", length(y), " cells (",
+                sprintf("%.1f%%", 100 * n_miss / length(y)),
+                ") have no observed outcome; they will be imputed each sweep.")
+        # Start them at the observed mean; the sampler replaces them from
+        # sweep 0 onward. Only the standardization below reads these values.
+        y[y_miss] <- mean(y[!y_miss])
     }
 
     if (length(t) != ncol(y)){
@@ -191,14 +234,31 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
         mtry <- 0
     }
 
-    meany = mean(y) # disable meany temporarily
-    y = y - meany
-    sdy = sd(y)
-
-    if(sdy == 0) {
-        stop('y is a constant variable; sdy = 0')
+    if (binary_outcome) {
+        obs <- y[!is.na(y)]
+        if (!all(obs %in% c(0, 1))) {
+            stop('with outcome = "binary", y must contain only 0, 1 and NA. \n')
+        }
+        # No standardization: the latent scale is fixed by the probit link,
+        # which is exactly what identifies it, and sigma is held at 1 in the
+        # sampler for the same reason. What we do centre is the location:
+        # qnorm of the observed rate is the latent grand mean, and handing it
+        # to the sampler as an offset means the forests only ever fit
+        # deviations from it, exactly as they do for a centred continuous
+        # outcome.
+        rate = mean(obs)
+        meany = qnorm(min(max(rate, 1e-4), 1 - 1e-4))
+        sdy = 1
     } else {
-        y = y / sdy
+        meany = mean(y) # disable meany temporarily
+        y = y - meany
+        sdy = sd(y)
+
+        if(sdy == 0) {
+            stop('y is a constant variable; sdy = 0')
+        } else {
+            y = y / sdy
+        }
     }
 
     # Leaf-variance priors, computed AFTER standardization, on the scale the
@@ -209,8 +269,11 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     # by a factor of var(y), leaving the forests effectively unregularized on
     # large-variance outcomes and over-shrunk on small ones. The 0.6 / 0.1
     # split is the share of outcome variance allotted to the two forests.
-    if (is.null(tau_pr))  tau_pr  <- 0.6 * var(as.vector(y)) / num_trees_pr
-    if (is.null(tau_trt)) tau_trt <- 0.1 * var(as.vector(y)) / num_trees_trt
+    # On the probit scale the latent has variance 1 by construction, which is
+    # the analogue of standardizing a continuous outcome.
+    y_var <- if (binary_outcome) 1 else var(as.vector(y))
+    if (is.null(tau_pr))  tau_pr  <- 0.6 * y_var / num_trees_pr
+    if (is.null(tau_trt)) tau_trt <- 0.1 * y_var / num_trees_trt
     tau_con = tau_pr
     tau_mod = tau_trt
 
@@ -276,7 +339,13 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     lambda_knl = lambda_knl,
                     random_intercept = random_intercept,
                     gamma_prior_a = gamma_prior_a,
-                    gamma_prior_b = gamma_prior_b)
+                    gamma_prior_b = gamma_prior_b,
+                    gp_constant_mean = gp_constant_mean,
+                    y_missing = if (n_miss > 0) y_miss * 1.0 else NULL,
+                    binary_outcome = binary_outcome,
+                    binary_offset = if (binary_outcome) meany else 0,
+                    ar1_errors = ar1_errors, rho_max = rho_max,
+                    sigma_u_init = sigma_u_init)
     class(obj) = "longbet"
 
     obj$time = t_con

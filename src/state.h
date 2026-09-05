@@ -31,6 +31,53 @@ public:
     // forest cannot reconstruct from the time-invariant covariates X_i.
     // y_work = y_orig - gamma_i is what every other part of the sampler
     // reads through y_std, so no other update needs to know gamma exists.
+    // ---- constant mean for the beta_S Gaussian process -----------------
+    // With a zero mean, a projection far past the observed window reverts to
+    // "no effect", because that is what the prior says and not because any
+    // data said so. A constant mean, estimated alongside everything else,
+    // makes it revert to the level the observed trajectory settled at.
+    bool gp_constant_mean;
+    double beta_mean;
+
+    // ---- unbalanced panels ---------------------------------------------
+    // Cells with no observed outcome. They are filled at the top of every
+    // sweep with a draw from their own full conditional, so the forests and
+    // every sufficient statistic downstream see a complete panel. This is
+    // ordinary Bayesian data augmentation: alternating
+    //   y_mis | theta   and   theta | y_obs, y_mis
+    // is a valid Gibbs sampler on the joint posterior, which is why nothing
+    // else in the sampler has to learn about missingness.
+    bool has_missing;
+    std::vector<int> y_missing;       // n_y * p_y, 1 = unobserved
+
+    // ---- binary outcomes -----------------------------------------------
+    // Albert and Chib data augmentation. y_binary holds the observed 0/1
+    // outcome; y_orig holds a latent normal drawn each sweep, truncated to
+    // the half-line the observation implies. Everything downstream then runs
+    // the ordinary Gaussian machinery on the latent scale with sigma fixed
+    // at 1, which is what makes the model a probit.
+    bool binary_outcome;
+    std::vector<int> y_binary;        // n_y * p_y, 0/1 (ignored where missing)
+    // Grand mean of the latent, qnorm(mean(y)). The sampler works on the
+    // latent minus this, exactly as it works on a centred continuous outcome,
+    // so the forests never have to carry the intercept.
+    double binary_offset;
+
+    // ---- AR(1) transitory errors ---------------------------------------
+    // y_it = fitted_it + gamma_i + u_it + eps_it with u an AR(1) process.
+    // Conditional on the latent path u, the forests see y - gamma - u, whose
+    // error is iid again, so XBART's conjugate leaf updates stay exact. This
+    // is the reason for sampling u rather than quasi-differencing the tree
+    // targets: after a Prais-Winsten transform the fitted value at (i,t)
+    // becomes mu(X_i,t) - rho*mu(X_i,t-1), a difference of two leaf values
+    // that sit in different leaves once a tree splits on time, and the leaf
+    // sufficient statistics stop being sums over independent observations.
+    bool ar1_errors;
+    std::vector<double> u;            // n_y * p_y latent AR(1) path
+    double rho;                       // persistence
+    double sigma_u;                   // innovation sd
+    double rho_max;                   // hard bound, keeps u from random-walking
+
     bool random_intercept;
     std::vector<double> gamma;        // length n_y
     double sigma_gamma;               // sd of the gamma prior
@@ -131,8 +178,15 @@ public:
                     this->full_residual_trt[j][index_trt] = *(this->y_std + this->n_y * j + i) - this->a * this->mu_fit[i][j] - this->b_vec[1] * this->beta_fit[i][j] * this->tau_fit[i][j];
                     index_trt++;
 
-                    // Unknown bug: the correct full residual should use beta_fit not beta_t.
-                    // But beta_fit leads to non-converging sigma and b values.
+                    // This used to carry a note saying that beta_fit is the
+                    // correct term here but "leads to non-converging sigma and
+                    // b values". It no longer does. The cause was the
+                    // covariance factorisation in update_time_coef, which
+                    // sampled beta with variance U*diag(s^2)*U' instead of
+                    // U*diag(s)*U' and so effectively pinned beta to its
+                    // conditional mean. With that fixed, b_scaling = TRUE
+                    // gives a stationary sigma (sd 0.0006, no drift over 200
+                    // sweeps) and b0/b1 that settle away from 1.
                 }
                 else
                 {
@@ -151,8 +205,9 @@ public:
         {
             for (size_t i = 0; i < this->n_y; i++)
             {
-                this->y_work[j * this->n_y + i] =
-                    this->y_orig[j * this->n_y + i] - this->gamma[i];
+                const size_t k = j * this->n_y + i;
+                this->y_work[k] = this->y_orig[k] - this->gamma[i]
+                                - (this->ar1_errors ? this->u[k] : 0.0);
             }
         }
     }
@@ -226,6 +281,18 @@ public:
         this->y_std  = this->y_work.data();
         this->gamma  = std::vector<double>(N, 0.0);
         this->random_intercept = false;
+        this->gp_constant_mean = false;
+        this->beta_mean        = 0.0;
+        this->has_missing      = false;
+        this->y_missing        = std::vector<int>(N * p_y, 0);
+        this->binary_outcome   = false;
+        this->y_binary         = std::vector<int>(N * p_y, 0);
+        this->binary_offset    = 0.0;
+        this->ar1_errors       = false;
+        this->u                = std::vector<double>(N * p_y, 0.0);
+        this->rho              = 0.0;
+        this->sigma_u          = 0.0;
+        this->rho_max          = 0.95;
         this->sigma_gamma      = 1.0;   // diffuse start, adapts after sweep 1
         this->gamma_prior_a    = 1.0;
         this->gamma_prior_b    = 0.1;

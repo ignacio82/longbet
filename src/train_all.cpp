@@ -60,7 +60,13 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
                     bool split_time_ps = true, bool split_time_trt = false,
                     double sig_knl = 1, double lambda_knl = 2,
                     bool random_intercept = false,
-                    double gamma_prior_a = 1.0, double gamma_prior_b = 0.1)
+                    double gamma_prior_a = 1.0, double gamma_prior_b = 0.1,
+                    bool gp_constant_mean = true,
+                    Rcpp::Nullable<Rcpp::NumericMatrix> y_missing = R_NilValue,
+                    bool binary_outcome = false,
+                    double binary_offset = 0.0,
+                    bool ar1_errors = false, double rho_max = 0.95,
+                    double sigma_u_init = 0.2)
 {
     // cout << "start training longbet" << endl;
     auto start = system_clock::now();
@@ -151,6 +157,11 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     arma_to_rcpp(X_tau, X_tau_std);
     arma_to_std_ordered(X_tau, Xorder_tau_std);
     y_mean = compute_mat_mean(y_std);
+    // For a probit the sampler works on the centred latent, so the forests
+    // start at zero just as they do for a centred continuous outcome. Leaving
+    // y_mean at the observed *proportion* would seed every tree with an
+    // intercept on the wrong scale, which the sampler then never fully sheds.
+    if (binary_outcome) y_mean = 0.0;
    
 
     ///////////////////////////////////////////////////////////////////
@@ -277,6 +288,45 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
 
     // Unit-level random intercept settings.
     state->random_intercept = random_intercept;
+    state->gp_constant_mean = gp_constant_mean;
+    state->ar1_errors = ar1_errors;
+    state->rho_max    = rho_max;
+    if (ar1_errors)
+    {
+        state->sigma_u = sigma_u_init;   // adapts from sweep 1
+        state->rho     = 0.3;
+    }
+
+    // Binary outcome: keep the 0/1 observation; y itself becomes the latent.
+    state->binary_outcome = binary_outcome;
+    if (binary_outcome)
+    {
+        for (size_t j = 0; j < p_y; j++)
+            for (size_t i = 0; i < N; i++)
+                state->y_binary[j * N + i] = (y_std(i, j) > 0.5) ? 1 : 0;
+        state->sigma_vec[0] = 1.0;
+        state->sigma_vec[1] = 1.0;
+        state->binary_offset = binary_offset;
+    }
+
+    // Unbalanced panel: mark the cells with no observed outcome.
+    if (y_missing.isNotNull())
+    {
+        Rcpp::NumericMatrix miss(y_missing);
+        size_t n_miss = 0;
+        for (size_t j = 0; j < p_y; j++)
+        {
+            for (size_t i = 0; i < N; i++)
+            {
+                if (miss(i, j) != 0)
+                {
+                    state->y_missing[j * N + i] = 1;
+                    n_miss++;
+                }
+            }
+        }
+        state->has_missing = (n_miss > 0);
+    }
     state->gamma_prior_a    = gamma_prior_a;
     state->gamma_prior_b    = gamma_prior_b;
 
@@ -308,6 +358,7 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     matrix<double> gamma_xinfo;
     ini_matrix(gamma_xinfo, N, num_sweeps);
     std::vector<double> sigma_gamma_draws(num_sweeps, 0.0);
+    std::vector<double> beta_mean_draws(num_sweeps, 0.0);
 
     std::unique_ptr<split_info> split_pr(new split_info(x_struct_pr, Xorder_std, Torder_std, t_values));
     std::unique_ptr<split_info> split_trt(new split_info(x_struct_trt, Xorder_tau_std, Sorder_std, s_values));
@@ -318,7 +369,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     mcmc_loop_longbet(split_pr, split_trt, split_gp, verbose, 
         sigma0_draw_xinfo, sigma1_draw_xinfo, b_xinfo, a_xinfo, beta_info, beta_xinfo, *trees_pr, *trees_trt, no_split_penality,
         state, model_pr, model_trt, x_struct_pr, x_struct_trt, x_struct_gp, a_scaling, b_scaling, split_time_ps, split_time_trt, 
-        resid_info, A_diag_info, Sig_diag_info, gamma_xinfo, sigma_gamma_draws);
+        resid_info, A_diag_info, Sig_diag_info, gamma_xinfo, sigma_gamma_draws,
+        beta_mean_draws);
 
     // predict tauhats and muhats
     // cout << "predict " << endl;
@@ -339,6 +391,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     std_to_rcpp(gamma_xinfo, gamma_draws);
     Rcpp::NumericVector sigma_gamma_out(num_sweeps);
     for (size_t i = 0; i < num_sweeps; i++) sigma_gamma_out[i] = sigma_gamma_draws[i];
+    Rcpp::NumericVector beta_mean_out(num_sweeps);
+    for (size_t i = 0; i < num_sweeps; i++) beta_mean_out[i] = beta_mean_draws[i];
 
     Rcpp::NumericMatrix resid(t_size, num_sweeps);
     Rcpp::NumericMatrix A_diag(t_size, num_sweeps);
@@ -413,6 +467,13 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     }
 
     // clean memory
+    // Read anything still needed off the state BEFORE releasing it: the
+    // return list below is built after state.reset().
+    const int n_missing_cells = (int) std::count(state->y_missing.begin(),
+                                                 state->y_missing.end(), 1);
+    const double rho_out = state->rho;
+    const double sigma_u_out = state->sigma_u;
+
     delete model_pr;
     delete model_trt;
     state.reset();
@@ -425,6 +486,12 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
         Rcpp::Named("gamma_draws") = gamma_draws,
         Rcpp::Named("sigma_gamma_draws") = sigma_gamma_out,
         Rcpp::Named("random_intercept") = random_intercept,
+        Rcpp::Named("gp_constant_mean") = gp_constant_mean,
+        Rcpp::Named("binary_outcome") = binary_outcome,
+        Rcpp::Named("ar1_errors") = ar1_errors,
+        Rcpp::Named("rho") = rho_out,
+        Rcpp::Named("sigma_u") = sigma_u_out,
+        Rcpp::Named("n_missing") = n_missing_cells,
         Rcpp::Named("sigma0_draws") = sigma0_draws,
         Rcpp::Named("sigma1_draws") = sigma1_draws,
         Rcpp::Named("b_draws") = b_draws,
@@ -465,7 +532,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
             Rcpp::Named("t_values") = t_vector,
             Rcpp::Named("resid") = resid,
             Rcpp::Named("A_diag") = A_diag,
-            Rcpp::Named("Sig_diag") = Sig_diag
+            Rcpp::Named("Sig_diag") = Sig_diag,
+            Rcpp::Named("beta_mean") = beta_mean_out
         )
 
     );

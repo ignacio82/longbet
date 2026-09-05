@@ -34,7 +34,8 @@ void mcmc_loop_longbet(
   matrix<double> &A_diag_info,
   matrix<double> &Sig_diag_info,
   matrix<double> &gamma_xinfo,
-  std::vector<double> &sigma_gamma_draws
+  std::vector<double> &sigma_gamma_draws,
+  std::vector<double> &beta_mean_draws
   )
 {
 
@@ -51,6 +52,10 @@ void mcmc_loop_longbet(
       COUT << "number of sweeps " << sweeps << endl;
       COUT << "--------------------------------" << endl;
     }
+
+    // Complete the panel before anything reads it this sweep. On sweep 0 the
+    // forests are empty, so the draw is around the (standardized) mean.
+    model_ps->draw_latent_outcome(state);
 
     model_ps->set_state_status(state, 0, x_struct_ps->X_std, split_pr->Xorder_std, x_struct_ps->t_std);
 
@@ -175,9 +180,11 @@ void mcmc_loop_longbet(
     {
       model_ps->update_random_intercept(state);
       model_ps->update_sigma_gamma(state);
+      model_ps->update_ar1(state);
     }
     std::copy(state->gamma.begin(), state->gamma.end(), gamma_xinfo[sweeps].begin());
     sigma_gamma_draws[sweeps] = state->sigma_gamma;
+    beta_mean_draws[sweeps]   = state->beta_mean;
 
     std::copy(state->beta_t.begin(), state->beta_t.end(),
     beta_xinfo[sweeps].begin());
