@@ -188,6 +188,26 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
         }
     }
 
+    # Treatment has to be absorbing. beta is indexed by "periods since this
+    # unit's first treated period", counted forward from that first onset and
+    # never consulting z again, so a unit that switches back off goes on being
+    # credited with an effect at a state index that keeps climbing. A second
+    # internal grid is built from cumsum(z) instead, which counts only the
+    # periods actually switched on; the two agree exactly while z is
+    # non-decreasing and diverge the moment it is not, leaving the Gaussian
+    # process kernel and the beta vector different sizes. What the user saw
+    # was an Armadillo error about incompatible matrix dimensions from deep
+    # inside the sampler. Say so here instead.
+    if (any(apply(z, 1, function(v) any(diff(v) < 0)))) {
+        bad <- which(apply(z, 1, function(v) any(diff(v) < 0)))
+        stop("longbet() requires absorbing treatment: z cannot return to 0 ",
+             "once a unit is treated (", length(bad), " of ", nrow(z),
+             " rows switch back off, first at row ", bad[1], "). ",
+             "Switchback and on/off designs are not supported -- beta is a ",
+             "single trajectory in time-since-adoption, which has no meaning ",
+             "once treatment is withdrawn.", call. = FALSE)
+    }
+
     # get post-treatment time matrix
     get_trt_time <- function(z_vec, t){
         treated_period <- which(z_vec == 1)

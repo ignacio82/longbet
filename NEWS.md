@@ -1,3 +1,51 @@
+# longbet 0.5.2
+
+## Fixed: a non-absorbing `z` aborted inside the sampler
+
+`longbet()` assumes treatment is absorbing, but never said so, and a panel
+where `z` switched back off failed with an Armadillo error about incompatible
+matrix dimensions from deep inside the Gaussian process. It now stops up
+front, naming the offending rows and saying why the design is unsupported.
+
+The cause is worth recording, because it is one assumption expressed three
+different ways. `beta` is indexed by periods since a unit's *first* treated
+period, counted forward from that onset and never consulting `z` again. The
+kernel grid and the treatment forest's split axis are built from `cumsum(z)`,
+which counts only the periods actually switched on. `predict.longbet()` used
+its own third copy of `cumsum(z)`. While `z` is non-decreasing all three
+agree exactly, which is why this went unnoticed; the moment it is not, the
+kernel and `beta` come out different sizes and the fit dies.
+
+Forced past the size check, the model was also quietly wrong rather than
+merely broken: because the state index keeps climbing through switched-off
+periods, a cell whose treatment had been withdrawn read back `beta` from the
+last switched-*on* state and reported very nearly the full effect. On a test
+panel whose true effect was 0 while off, it returned 0.49.
+
+## Not added: switchback support
+
+Making the state index switchback-aware is not hard, and an implementation
+that fits such panels and recovers the on/off pattern correctly (0.500 while
+on against a truth of 0.500, -0.011 while off against a truth of 0) is kept
+on the `switchback-exploration` branch.
+
+It is not on `main` because the estimand people would actually want from a
+switchback -- for which units does the effect persist after withdrawal -- is
+not recovered reliably. Against a design where persistence is a known
+function of a covariate, the correlation between the estimated and true
+per-unit carryover ranged from 0.01 to 0.66 depending on the GP prior scale,
+and the RMSE never beat predicting the mean. Even with homogeneous
+persistence the average decay came out wrong: 0.556 estimated against 0.358
+true, two periods after switch-off.
+
+That is structural, not a tuning failure. Heterogeneous carryover is
+heterogeneity in `beta`, and `beta` is a single shared trajectory by
+construction; the only route to it is the state-by-covariate interaction
+inside `nu`, which competes with `beta` for the same variation. Doing it
+properly needs a separate treatment forest for the carryover phase, or
+unit-level `beta`, and either is a different model rather than a flag on
+this one. Until then an error is more honest than a number.
+
 # longbet 0.5.1
 
 ## Fixed: a continuous time-varying covariate made fits quadratic
