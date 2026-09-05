@@ -348,7 +348,10 @@ void longbetModel::update_random_intercept(std::unique_ptr<State> &state)
       const double b  = treated ? state->b_vec[1] : state->b_vec[0];
 
       // Residual against the *original* outcome, i.e. gamma_i is still in it.
+      // The SUR offset is removed too: gamma_i belongs to this equation's
+      // own error, not to the part already explained by earlier outcomes.
       double r = state->y_orig[j * state->n_y + i]
+               - state->sur_offset[j * state->n_y + i]
                - state->a * state->mu_fit[i][j]
                - b * state->beta_fit[i][j] * state->tau_fit[i][j];
       if (state->random_intercept && state->ar1_errors)
@@ -450,8 +453,9 @@ void longbetModel::update_ar1(std::unique_ptr<State> &state)
       const double s2 = pow(treated ? state->sigma_vec[1] : state->sigma_vec[0], 2);
       const double b  = treated ? state->b_vec[1] : state->b_vec[0];
 
-      // Residual against everything except u.
+      // Residual against everything except u (SUR offset removed as well).
       const double r = state->y_orig[k]
+                     - state->sur_offset[k]
                      - state->a * state->mu_fit[i][t]
                      - b * state->beta_fit[i][t] * state->tau_fit[i][t]
                      - state->gamma[i];
@@ -552,10 +556,14 @@ void longbetModel::draw_latent_outcome(std::unique_ptr<State> &state)
       const double sd = treated ? state->sigma_vec[1] : state->sigma_vec[0];
       const double b  = treated ? state->b_vec[1] : state->b_vec[0];
 
+      // y_orig is the full latent, so its mean carries everything that is
+      // later subtracted to form y_work -- including the SUR offset. Zero for
+      // a single outcome.
       const double fitted = state->a * state->mu_fit[i][j]
                           + b * state->beta_fit[i][j] * state->tau_fit[i][j]
                           + state->gamma[i]
-                          + (state->ar1_errors ? state->u[k] : 0.0);
+                          + (state->ar1_errors ? state->u[k] : 0.0)
+                          + state->sur_offset[k];
 
       if (state->binary_outcome && !missing)
       {

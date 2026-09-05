@@ -1,3 +1,76 @@
+# longbet 0.6.0
+
+## Added: several outcomes fitted jointly (`longbet_multi()`)
+
+Interventions rarely have one endpoint, and the question a business asks is
+usually about several at once: *what is the chance this seller gains revenue
+**and** does not churn?* Fitting each outcome separately cannot answer it,
+because the draws are then independent by construction -- the answer silently
+assumes the very thing you wanted to measure.
+
+`longbet_multi()` fits M outcomes in one sampler, tying their contemporaneous
+errors together with the triangular factorization of Huber & Rossini (2022),
+`Sigma = A_0^-1 H A_0^-T`. Outcome m is fitted to the orthogonalized target
+`y_m - sum_{l<m} Gamma_ml eps_l`, which is an ordinary univariate LongBet
+problem, so an M-outcome model costs about M univariate fits. Mixed
+continuous and binary (probit) outcomes are supported.
+
+New: `longbet_multi()`, `predict()` for it, `joint_prob()`, `effect_draws()`,
+`outcome_correlation()`. Each element of `$fits` is an ordinary `longbet`
+object, so everything that already worked on a single fit still works.
+
+### What it measurably buys
+
+*A coherent joint posterior.* Draw d of every outcome comes from the same
+sweep, so counting draws gives genuine joint probabilities. Whether that
+differs from multiplying the marginals depends on something worth knowing:
+the effects' posteriors correlate only when the outcomes share drivers as
+well as shocks. With effects driven by *different* covariates, the posterior
+correlation was +0.05 despite an error correlation of 0.6, and the product of
+marginals was already right. With a *shared* driver it was +0.35 to +0.49, and
+joint draws were better calibrated than the product (calibration error 0.199
+against 0.222). `outcome_correlation()` reports the error correlation --
+recovered as 0.79 against a true 0.80 -- so the assumption can be checked
+rather than hoped for.
+
+*Variance reduction.* Orthogonalizing a continuous outcome against correlated
+predecessors shrinks its innovation: on a two-outcome panel with error
+correlation 0.8, the second outcome's residual sd fell from 0.499 to 0.307,
+against a theoretical 0.30, and its CATT RMSE improved about 4%. The first
+outcome is untouched, which is what triangularity means.
+
+### Two things found by testing that the design had to change for
+
+**A probit must not be orthogonalized.** Its latent scale is not identified,
+so sigma is pinned at 1; orthogonalization genuinely lowers the innovation
+variance, the model cannot represent that, and the mismatch showed up as a
+10% worse effect estimate (RMSE 0.0285 against 0.0260 fitting it alone).
+Binary equations are therefore exempt: they share the sampler, so their draws
+stay paired for joint inference, but their own fit is exactly what it would
+have been alone. Verified equal to four decimal places.
+
+**Outcomes are reordered internally and restored on the way out.** Continuous
+outcomes are fitted first so they can benefit from each other, with probits
+last where they adjust nothing. `$fits` is returned in the order the caller
+supplied, because silently permuting someone's outcomes is a trap; `$order`
+records what happened, and `$Gamma_draws` is in the internal order.
+
+### Honest limits
+
+The joint-probability gain is real but modest, and smaller than one might
+expect. In the hardest case tested -- per-unit effects small relative to
+posterior uncertainty -- both the joint draws and the product of marginals
+understated the truth badly (0.287 and 0.254 against an observed 0.466); the
+joint fit was merely less wrong. Where the outcomes share no structure, it
+buys nothing over separate fits except the convenience of one call and the
+reassurance of a measured correlation.
+
+The single-outcome path is untouched: the sweep body was factored into
+`mcmc_one_sweep()` so both loops can drive it, and the staggered-panel
+regression digest is unchanged (fdd00377d4ce8e9da733431d996d480b). 21 new
+checks in `tests/test_multi.R`; the 48-check random-intercept suite and the
+13 stability checks still pass.
+
 # longbet 0.5.5
 
 ## Fixed: `reliable` contradicted its own documentation

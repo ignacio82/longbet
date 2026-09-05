@@ -84,7 +84,16 @@ public:
     double gamma_prior_a;             // inverse-gamma shape for sigma_gamma^2
     double gamma_prior_b;             // inverse-gamma rate  for sigma_gamma^2
     std::vector<double> y_orig;       // standardized outcome as supplied
-    std::vector<double> y_work;       // y_orig - gamma_i
+    std::vector<double> y_work;       // y_orig - gamma_i - sur_offset
+
+    // Multi-outcome (SUR) support. When several outcomes are fitted jointly,
+    // equation m is estimated on the ORTHOGONALIZED target
+    //     y_orig - sum_{l<m} Gamma_{ml} * eps_l
+    // where eps_l are the raw residuals of the equations before it. That
+    // subtraction lives here, folded into y_work exactly as gamma_i is, so
+    // every consumer downstream -- trees, sigma, the GP -- sees the adjusted
+    // target with no change of its own. All zeros for a single outcome.
+    std::vector<double> sur_offset;   // n_y * p_y, laid out like y
 
     // Random
     std::vector<double> prob;
@@ -207,7 +216,8 @@ public:
             {
                 const size_t k = j * this->n_y + i;
                 this->y_work[k] = this->y_orig[k] - this->gamma[i]
-                                - (this->ar1_errors ? this->u[k] : 0.0);
+                                - (this->ar1_errors ? this->u[k] : 0.0)
+                                - this->sur_offset[k];
             }
         }
     }
@@ -279,6 +289,7 @@ public:
         this->y_orig.assign(y_std, y_std + N * p_y);
         this->y_work = this->y_orig;
         this->y_std  = this->y_work.data();
+        this->sur_offset = std::vector<double>(N * p_y, 0.0);
         this->gamma  = std::vector<double>(N, 0.0);
         this->random_intercept = false;
         this->gp_constant_mean = false;
