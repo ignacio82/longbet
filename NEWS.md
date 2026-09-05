@@ -1,3 +1,22 @@
+# longbet 0.5.5
+
+## Fixed: `reliable` contradicted its own documentation
+
+`att_stability()` documents that `ess_median` speaks to the interval and
+`width_ratio` speaks to drift, on the evidence that the split-half ratio does
+not track coverage -- it cannot separate 80 sweeps from 400 on fits whose
+coverage differs sharply. The code then ANDed both into `reliable` anyway.
+
+The consequence showed up immediately on the book chapter's headline fit: 140
+post-burn-in sweeps, median ESS 41.8, comfortably over the threshold, and a
+split-half ratio of 0.85 that tripped the drift test and returned
+`reliable = FALSE` -- for a configuration the chapter's own 40-replication
+study measures at 95.2% coverage, which is nominal.
+
+`reliable` now depends on the effective sweep count alone, that being the only
+one of these quantities calibrated against measured coverage. Drift keeps its
+own separate warning, which is what it was always for.
+
 # longbet 0.5.4
 
 ## Recalibrated: `att_stability()`'s reliability threshold

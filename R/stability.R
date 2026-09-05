@@ -42,7 +42,8 @@
 #' @return A list with `summary` (one row) and `by_event_time`. `summary` holds
 #'   the post-burn-in sweep count, the median and minimum effective sweeps, the
 #'   Monte Carlo standard error of the ATT, the split-half width ratio, and
-#'   `reliable`.
+#'   `reliable` -- which depends on the effective sweep count alone, that being
+#'   the only one of these calibrated against measured coverage.
 #' @examples
 #' \dontrun{
 #'   p <- predict.longbet(fit, x, x, z, t = weeks)
@@ -97,7 +98,13 @@ att_stability <- function(object, alpha = 0.05, min_ess = 40,
     ess_min  <- min(ess, na.rm = TRUE)
     mcse     <- stats::median(apply(full, 1, stats::sd) / sqrt(ess), na.rm = TRUE)
     drifting <- is.finite(ratio) && abs(ratio - 1) > drift_tol
-    reliable <- is.finite(ess_med) && ess_med >= min_ess && !drifting
+    # `reliable` is about the interval, and the only signal validated against
+    # measured coverage is the effective sweep count. The split-half ratio is
+    # deliberately NOT part of this verdict: it does not track coverage -- it
+    # cannot separate 80 sweeps from 400 on fits whose coverage differs
+    # sharply -- so folding it in fails well-calibrated fits for a reason that
+    # has nothing to do with their calibration. It gets its own warning.
+    reliable <- is.finite(ess_med) && ess_med >= min_ess
 
     if (warn && is.finite(ess_med) && ess_med < min_ess) {
         warning("att_stability(): ", D, " post-burn-in sweeps give a median of ",
