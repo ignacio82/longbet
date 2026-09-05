@@ -100,9 +100,25 @@ public:
     }
 
     void ini_cov_kernel(double &sig_knl, double &lambda_knl){
+        ini_cov_kernel_on(this->t_values, sig_knl, lambda_knl);
+    }
+
+    // update_time_coef() sizes everything by s_values.size(), so the Gaussian
+    // process struct has to build its kernel on the same grid. Normally the
+    // two grids coincide -- unique(t_mod) and unique(S) are both 0..post_t --
+    // but t_mod loses its zero as soon as any unit is treated in the first
+    // observed period, and the kernel then comes out one row short of what
+    // update_time_coef indexes. That read ran off the end of the matrix.
+    void ini_cov_kernel_s(double sig_knl, double lambda_knl){
+        ini_cov_kernel_on(this->s_values, sig_knl, lambda_knl);
+    }
+
+    void ini_cov_kernel_on(std::vector<double> &vals, double sig_knl,
+                           double lambda_knl){
         double sigma2 = pow(sig_knl, 2);
         double lambda2 = pow(lambda_knl, 2);
 
+        std::vector<double> &t_values = vals;
         size_t t_size = t_values.size();
         ini_matrix(this->cov_kernel, t_size, t_size);
         double diag = squared_exponential(t_values[0], t_values[0], sigma2, lambda2);

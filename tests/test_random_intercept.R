@@ -170,4 +170,27 @@ f_no <- longbet(y = y_ar, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
                 num_trees_trt = 20, random_intercept = TRUE, ar1_errors = FALSE)
 ok("ar1_errors = FALSE leaves rho at zero", f_no$rho == 0)
 
+
+
+# ---- 10. a unit treated from the first observed period ------------------
+# This used to segfault, on this fork and upstream: beta_size becomes p_y + 1
+# when get_trt_time() dates an adoption one step before the panel starts, and
+# both the beta draw buffer and the Gaussian process kernel were sized p_y.
+cat("\n-- unit treated from period 1 --\n")
+z_first <- z; z_first[1:10, ] <- 1L
+f_first <- longbet(y = y, x = x, x_trt = x, z = z_first, t = 1:Tn, pcat = 1,
+                   num_sweeps = 30, num_burnin = 10, num_trees_pr = 8,
+                   num_trees_trt = 8, random_intercept = FALSE)
+ok("a unit treated in every period no longer crashes the sampler",
+   is.finite(sum(f_first$beta_values)))
+ok("beta buffers are sized by beta_size, not by the number of periods",
+   nrow(f_first$beta_values) == max(rowSums(z_first)) + 1 &&
+   nrow(f_first$beta_draws) == nrow(f_first$beta_values),
+   sprintf("(%d rows)", nrow(f_first$beta_values)))
+ok("a panel with no untreated observation at all is an error",
+   inherits(try(longbet(y = y, x = x, x_trt = x,
+                        z = matrix(1L, n, Tn), t = 1:Tn, pcat = 1,
+                        num_sweeps = 5, num_burnin = 2), silent = TRUE),
+            "try-error"))
+
 cat("\nAll tests passed.\n")

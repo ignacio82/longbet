@@ -1,3 +1,26 @@
+# longbet 0.3.1
+
+## Fixed: a unit treated in the first observed period crashed the sampler
+
+`longbet()` segfaulted, on this fork and on `google/longbet`, whenever any unit
+was already treated in the first period of the panel. Two buffers were sized by
+the number of periods when they had to be sized by the number of distinct
+times-since-adoption, and those differ by one in exactly that case:
+`get_trt_time()` dates such a unit's adoption one step before the panel starts,
+so `beta_size` becomes `p_y + 1`.
+
+* The per-sweep `beta` draw buffer was `ini_matrix(beta_xinfo, p_y, ...)`, one
+  element short of the `std::copy` that filled it.
+* The Gaussian process kernel was built from the unique values of `t_mod`, but
+  `update_time_coef()` indexes it by `s_values.size()`. `t_mod` loses its zero
+  entry in this case, so the kernel came out one row short of what was read
+  from it. The kernel is now built on the same grid it is indexed by, which is
+  bit-for-bit identical whenever the two grids agree -- that is, on every panel
+  with at least one period in which nobody is treated yet.
+
+A panel in which *every* unit is treated in *every* period identifies nothing
+and is now an error rather than a crash.
+
 # longbet 0.3.0
 
 Five further changes, each one recommended, implemented, and then *measured*.

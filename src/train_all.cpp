@@ -253,8 +253,14 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     matrix<double> b_xinfo;
     ini_matrix(b_xinfo, num_sweeps, 2);
 
+    // beta_t is indexed by time-since-adoption and has beta_size entries, not
+    // p_y. Sizing this buffer by p_y overflowed it by one whenever any unit was
+    // treated in the first observed period, because get_trt_time() then dates
+    // that unit's adoption one step before the panel starts and beta_size
+    // becomes p_y + 1. That is a heap write past the end, and in practice a
+    // segfault.
     matrix<double> beta_xinfo;
-    ini_matrix(beta_xinfo, p_y, num_sweeps);
+    ini_matrix(beta_xinfo, beta_size, num_sweeps);
 
     // // Create trees
     vector<vector<tree>> *trees_pr = new vector<vector<tree>>(num_sweeps);
@@ -341,6 +347,11 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     // Temp structure when t used in treatment function differs from the GP function
     std::vector<double> initial_theta_gp(1, 0);
     std::unique_ptr<X_struct> x_struct_gp(new X_struct(Xpointer_tau, ypointer, tpointer_tau, Spointer, s_values, N, p_y, Xorder_tau_std, torder_tau_std, Sorder_std, p_categorical_trt, p_continuous_trt, &initial_theta_trt, num_trees_trt, sig_knl, lambda_knl));
+    // Build this one's kernel on the time-since-adoption grid that
+    // update_time_coef actually indexes. Identical to the default whenever the
+    // two grids agree, which is every panel with at least one period in which
+    // nobody is treated yet.
+    x_struct_gp->ini_cov_kernel_s(sig_knl, lambda_knl);
 
     size_t t_size = state->beta_size;
     matrix<double> resid_info;
@@ -386,7 +397,7 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     Rcpp::NumericMatrix b_draws(num_sweeps, 2);
     Rcpp::NumericMatrix a_draws(num_sweeps, 1);
     Rcpp::NumericMatrix beta_values(t_size, num_sweeps);
-    Rcpp::NumericMatrix beta_draws(p_y, num_sweeps);
+    Rcpp::NumericMatrix beta_draws(beta_size, num_sweeps);
     Rcpp::NumericMatrix gamma_draws(N, num_sweeps);
     std_to_rcpp(gamma_xinfo, gamma_draws);
     Rcpp::NumericVector sigma_gamma_out(num_sweeps);

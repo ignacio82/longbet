@@ -138,6 +138,10 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     # separating its own level from the treatment effect, so gamma_i and tau
     # are only held apart by the prior. Warn rather than fail: the fit is still
     # usable, but those units' effects are prior-driven.
+    if (all(z == 1)) {
+        stop("every unit is treated in every period: there is no untreated ",
+             "observation anywhere, so no treatment effect is identified. \n")
+    }
     if (random_intercept) {
         always_treated <- sum(rowSums(z) == ncol(z))
         if (always_treated > 0) {
