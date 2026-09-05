@@ -1,3 +1,69 @@
+# longbet 0.5.4
+
+## Recalibrated: `att_stability()`'s reliability threshold
+
+`min_ess` now defaults to 40, not 50. The original number came from a probe on
+one panel; measured against coverage on the design in the book chapter it was
+wrong in a way that mattered, because it failed a configuration that is
+demonstrably well calibrated. Across 40 replications:
+
+    median ESS ~23  ->  92.0% coverage
+    median ESS ~42  ->  95.2% coverage  (nominal)
+
+The chapter's headline fit sits at ESS 41.8, so at the old threshold the
+function called an interval unreliable while the chapter's own Monte Carlo
+showed it covering at 95.2%. The help now states both calibration points, says
+plainly that ESS depends on the panel, and points at `ess_median` as the
+number to read rather than the boolean.
+
+## Evaluated against BAVART, and not adopted
+
+Reviewed Huber & Rossini (2022), *Inference in Bayesian Additive Vector
+Autoregressive Tree Models*, and the BAVART code, for ideas worth porting.
+Two were tested against measured outcomes and neither survived. Recording them
+so the ground does not have to be covered twice.
+
+**Calendar-time heteroscedasticity.** BAVART's stochastic volatility makes the
+error variance move with time; the panel analogue is a variance factor `s_t`
+shared by every unit, folded into the leaf sufficient statistics as a weight
+`1/s_t^2`. The argument for it is that, being common to all units, it cannot
+absorb unit-specific treatment heterogeneity the way the unit-level AR(1) of
+0.3.0 did. Implemented and tested on a panel with one week at four times the
+usual noise, same total variance:
+
+    off                      CATT RMSE 0.0418 (sd 0.0075)   coverage 92%
+    on                       CATT RMSE 0.0660 (sd 0.0241)   coverage 89%
+    on, untreated cells only CATT RMSE 0.0839 (sd 0.0538)   coverage 91%
+
+The variance itself is recovered well -- the noisy week comes back at roughly
+30x against a truth of 50x, the quiet ones near 1 -- so this is not an
+estimation failure. It is that using the estimate as a weight hurts.
+Residuals carry unexplained signal as well as noise, so a period the forest
+has not fitted yet inflates `s_t`, which downweights the period, which stops it
+ever being fitted. Restricting the variance to untreated cells was meant to
+break that loop and made it worse. The safety argument is incomplete: sharing
+across units does protect unit-level heterogeneity, but `s_t` still competes
+with the *time* structure, and the time dimension is exactly where `beta_S`
+lives. Reverted.
+
+**Student-t errors.** Proposed for heavy-tailed business metrics. The premise
+does not hold here: with t_3 errors scaled to the same variance as the
+Gaussian case, CATT RMSE was 0.0292 against 0.0341 -- heavy tails were
+*easier*, because at matched variance the mass sits in rare extremes and most
+cells are cleaner. Not implemented; there is no demonstrated problem to fix.
+
+Two further ideas were reviewed and left alone. Multi-outcome estimation via
+BAVART's triangular factorization is genuinely attractive and needs no change
+to the tree engine, but conditioning one outcome's mean on another outcome's
+residual is conditioning on a post-treatment quantity, and the causal
+consequences of that need working out before it is offered. Dirichlet variable
+selection is not in the Huber & Rossini paper at all -- Linero is cited, not
+used -- and the latent scaffolding here is inert: with the default `mtry = 0`,
+fits are bit-identical to `mtry = p`, so no selection is happening and the
+`std::gamma_distribution(0.0, 1.0)` call that would be undefined behaviour is
+unreachable. Worth fixing if the feature is ever switched on; not urgent while
+it cannot be reached.
+
 # longbet 0.5.3
 
 ## Added: `att_stability()`, because under-covering intervals were silent

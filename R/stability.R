@@ -29,10 +29,13 @@
 #' @param object Output of [predict.longbet()], or of [get_att()].
 #' @param alpha Credible level, matching the one you will report.
 #' @param min_ess Effective sweeps below which the interval is called
-#'   unreliable. The default of 50 is a guideline, not a theorem: on panels of
-#'   the shape this package targets, coverage measured across 40 replications
-#'   was about 89% at a median ESS near 23 and reached nominal by an ESS in the
-#'   fifties. Treat it as a smoke alarm.
+#'   unreliable. The default of 40 is a smoke alarm calibrated on measured
+#'   coverage, not a theorem. Across 40 replications of a staggered rollout,
+#'   ATT intervals covered 92.0% at a median ESS near 23 and 95.2% -- nominal
+#'   -- at a median ESS near 42, so the useful line sits between them. ESS
+#'   depends on the panel, so on data unlike that, calibrate it yourself
+#'   before trusting the verdict; the number the function is really for is
+#'   `ess_median`, not the boolean.
 #' @param drift_tol Relative disagreement between sweep halves that counts as
 #'   drift rather than noise.
 #' @param warn Emit a warning when the interval looks unreliable.
@@ -46,7 +49,7 @@
 #'   att_stability(p)
 #' }
 #' @export
-att_stability <- function(object, alpha = 0.05, min_ess = 50,
+att_stability <- function(object, alpha = 0.05, min_ess = 40,
                           drift_tol = 0.15, warn = TRUE) {
     full <- if (!is.null(object$att_full)) object$att_full
             else get_att(object, alpha = alpha)$att_full
