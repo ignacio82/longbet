@@ -37,7 +37,11 @@ mtry = 0L, n_min = 10,
 sig_knl = 1, lambda_knl = 1,
 split_time_ps = TRUE, split_time_trt = TRUE,
 random_intercept = TRUE,
-gamma_prior_a = 1, gamma_prior_b = 0.1)
+gamma_prior_a = 1, gamma_prior_b = 0.1,
+tau_pr = NULL, tau_trt = NULL,
+max_depth = 50, num_cutpoints = 20,
+a_scaling = TRUE, b_scaling = FALSE,
+random_seed = 0, parallel = TRUE, verbose = FALSE)
 ```
 
 ### Arguments
@@ -59,9 +63,11 @@ split_time_trt: whether the treatment forest may split on time since adoption. T
 random_intercept: whether to draw unit-level random intercepts (default TRUE, added in this fork). See NEWS.md.
 gamma_prior_a, gamma_prior_b: inverse-gamma shape and rate for the random-intercept variance, on the standardized outcome scale.
 
-`longbet()` seeds its own sampler internally, so `set.seed()` in R does not
-affect the fit and refitting returns the identical answer. The Gaussian process
-projection in `predict.longbet()` *is* random; pass `random_seed` to fix it.
+random_seed: seed for the sampler. `longbet()` ignores R's RNG state, so this is the only way to get independent runs; vary it to run several chains and measure Monte Carlo error.
+tau_pr, tau_trt: leaf variance priors on the **standardized** outcome scale (defaults 0.6/num_trees_pr and 0.1/num_trees_trt).
+
+The Gaussian process projection in `predict.longbet()` is a draw, not a
+calculation; pass its own `random_seed` there to fix it.
 
 ### See Also
 

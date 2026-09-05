@@ -90,4 +90,26 @@ w <- tryCatch({ do.call(longbet, bad_args); NULL },
 ok("always-treated units raise a warning",
    !is.null(w) && grepl("treated in every period", w))
 
+
+
+# ---- 5. the estimator does not depend on the units of y ----------------
+cat("\n-- scale invariance --\n")
+att_scaled <- function(sc) {
+  f <- do.call(longbet, modifyList(fit_args,
+        list(y = y * sc, random_intercept = FALSE)))
+  mean(get_att(predict.longbet(f, x, x, z, t = 1:Tn, random_seed = 1))$att) / sc
+}
+a_small <- att_scaled(0.01); a_one <- att_scaled(1); a_big <- att_scaled(1000)
+ok("ATT is invariant to rescaling y",
+   max(abs(c(a_small, a_big) - a_one)) < 0.01,
+   sprintf("(%.4f / %.4f / %.4f)", a_small, a_one, a_big))
+
+# ---- 6. random_seed produces independent fits --------------------------
+s1 <- do.call(longbet, modifyList(fit_args, list(random_seed = 1)))
+s1b <- do.call(longbet, modifyList(fit_args, list(random_seed = 1)))
+s2 <- do.call(longbet, modifyList(fit_args, list(random_seed = 2)))
+ok("same seed reproduces the fit", identical(s1$beta_values, s1b$beta_values))
+ok("different seed gives an independent fit",
+   !identical(s1$beta_values, s2$beta_values))
+
 cat("\nAll tests passed.\n")

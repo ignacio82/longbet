@@ -79,6 +79,58 @@ Consequences, both now fixed:
   wildly with the prior scale. With the fix, the projection contains the truth
   at all six withheld horizons for every lengthscale tried at `sigma = 1`.
 
+## Fixed: the amount of regularization depended on the units of `y`
+
+`longbet()` computed the leaf-variance priors for both forests from the raw
+outcome,
+
+```r
+tau_con = 0.6 * var(as.vector(y)) / num_trees_pr
+tau_mod = 0.1 * var(as.vector(y)) / num_trees_trt
+```
+
+and then standardized `y` to unit variance before handing it to the sampler.
+The priors were therefore off by a factor of `var(y)`: measure the same outcome
+in dollars rather than log dollars and the forests get a leaf prior larger by
+six orders of magnitude. The `0.6` and `0.1` are meant to be the *share of
+outcome variance* each forest may use, which is only what they are on the
+standardized scale. They are now computed after standardization, and can be
+overridden through the new `tau_pr` and `tau_trt` arguments.
+
+This is a correctness fix rather than an accuracy fix, and the distinction
+matters. On a well-conditioned problem the point estimate barely moves. Where
+it bites is where the prior binds — a modest heterogeneous effect against a
+noisy baseline. Rescaling the *same* outcome, with everything else held fixed:
+
+| scale applied to `y` | CATT RMSE, 0.1.2 | CATT RMSE, 0.2.0 |
+|----------------------|------------------|------------------|
+| 0.01                 | 0.315            | 0.263            |
+| 1                    | 0.230            | 0.257            |
+| 100                  | 0.189            | 0.266            |
+
+(the true conditional effects have standard deviation 0.3). The old column
+varies by two thirds across a change of units that carries no information;
+whether a given analysis was over- or under-regularized was a property of the
+unit it happened to be measured in. Note that the old behaviour is *better* at
+`scale = 100` here, because this effect is genuinely heterogeneous and the
+accidental under-shrinkage helped — which is the point: it was arbitrary, not
+conservative. The new column is invariant up to floating point. Set `tau_trt`
+explicitly if you want to move away from the default deliberately.
+
+## New: `random_seed`, and the previously hidden hyperparameters
+
+`longbet()` hardcoded `random_seed = 0`, so every fit on the same data returned
+the identical answer and there was no way to run independent chains or measure
+Monte Carlo error. `random_seed` is now an argument. So are `max_depth`,
+`num_cutpoints`, `a_scaling`, `b_scaling`, `parallel` and `verbose`, all of
+which were fixed inside the function body under a comment reading "deprecated
+hyperparameters for user experience". Defaults are unchanged, so this is
+backwards compatible.
+
+`num_cutpoints` is the one most worth revisiting: it defaults to 20 candidate
+splits per node, which is coarse for continuous covariates with a lot of
+structure.
+
 ## Fixed: reproducibility of the projection
 
 `predict_beta()` seeded a Mersenne twister from `std::random_device`, so the

@@ -27,6 +27,10 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     split_time_ps = TRUE, split_time_trt = TRUE,
                     random_intercept = TRUE,
                     gamma_prior_a = 1, gamma_prior_b = 0.1,
+                    tau_pr = NULL, tau_trt = NULL,
+                    max_depth = 50, num_cutpoints = 20,
+                    a_scaling = TRUE, b_scaling = FALSE,
+                    random_seed = 0, parallel = TRUE, verbose = FALSE,
                     ps = NULL) {
 
     if(!("matrix" %in% class(x))){
@@ -187,10 +191,6 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
         mtry <- 0
     }
 
-    # set defaults for taus if it wasn't provided with the call
-    tau_con = 0.6 * var(as.vector(y)) / num_trees_pr
-    tau_mod = 0.1 * var(as.vector(y)) / num_trees_trt
-    
     meany = mean(y) # disable meany temporarily
     y = y - meany
     sdy = sd(y)
@@ -201,13 +201,24 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
         y = y / sdy
     }
 
+    # Leaf-variance priors, computed AFTER standardization, on the scale the
+    # C++ sampler actually works on, where var(y) is 1 by construction.
+    # Computing them from var(raw y) -- as this package did through 0.1.2 --
+    # makes the amount of regularization depend on the units of the outcome:
+    # the same data in dollars rather than log dollars gets a leaf prior larger
+    # by a factor of var(y), leaving the forests effectively unregularized on
+    # large-variance outcomes and over-shrunk on small ones. The 0.6 / 0.1
+    # split is the share of outcome variance allotted to the two forests.
+    if (is.null(tau_pr))  tau_pr  <- 0.6 * var(as.vector(y)) / num_trees_pr
+    if (is.null(tau_trt)) tau_trt <- 0.1 * var(as.vector(y)) / num_trees_trt
+    tau_con = tau_pr
+    tau_mod = tau_trt
+
     if(num_burnin >= num_sweeps){
         stop(paste0('num_burnin (',num_burnin,') cannot exceed or match the total number of sweeps (',num_sweeps,')'))
     }
 
-    # deprecated hyperparameters for user experience
-    max_depth = 50
-    num_cutpoints = 20
+    # still fixed: tree-prior shape and the sigma prior
     no_split_penality = log(num_cutpoints)
     alpha_con = 0.95; beta_con = 1.25
     kap_con = 16; s_con = 4
@@ -215,10 +226,8 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     alpha_mod = 0.95; beta_mod = 1.25
     kap_mod = 16; s_mod = 4
     trt_scale = FALSE
-    verbose = FALSE; parallel = TRUE
-    set_random_seed = TRUE; random_seed = 0
     sample_weights_flag = TRUE
-    a_scaling = TRUE; b_scaling = FALSE
+    set_random_seed = TRUE
 
     obj = longbet_cpp(y = y,
                     X = x, 
