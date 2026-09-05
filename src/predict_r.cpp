@@ -14,7 +14,8 @@
 using namespace arma;
 // [[Rcpp::export]]
 Rcpp::List predict_longbet(arma::mat X, arma::mat t, 
-                        Rcpp::XPtr<std::vector<std::vector<tree>>> tree_pnt)
+                        Rcpp::XPtr<std::vector<std::vector<tree>>> tree_pnt,
+                        Rcpp::Nullable<Rcpp::List> x_tv = R_NilValue)
 {
 
     // Process the prognostic input
@@ -47,10 +48,24 @@ Rcpp::List predict_longbet(arma::mat X, arma::mat t,
         ini_matrix(pred_xinfo[i], p_y, N);
     }
 
+    // Time-varying covariates, in the same order as at fit time. The trees
+    // record which cell-level axis they split on, so these have to line up.
+    std::vector<Rcpp::NumericMatrix> tv_keep;
+    std::vector<const double *> tv_ptrs;
+    if (x_tv.isNotNull())
+    {
+        Rcpp::List l(x_tv);
+        for (int k = 0; k < l.size(); k++)
+        {
+            tv_keep.push_back(Rcpp::as<Rcpp::NumericMatrix>(l[k]));
+        }
+        for (size_t k = 0; k < tv_keep.size(); k++) tv_ptrs.push_back(&tv_keep[k][0]);
+    }
+
     longbetModel *model = new longbetModel();
 
     // Predict
-    model->predict_std(Xpointer, tpointer, N, p_y, num_sweeps, pred_xinfo, *trees);
+    model->predict_std(Xpointer, tpointer, N, p_y, num_sweeps, pred_xinfo, *trees, &tv_ptrs);
 
     // Convert back to Rcpp
     Rcpp::NumericMatrix preds(N * p_y, num_sweeps);

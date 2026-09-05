@@ -289,7 +289,7 @@ bool no_split, std::unique_ptr<State> &state) const
 }
 
 // makes a prediction for treatment effect on the given Xtestpointer data
-void longbetModel::predict_std(const double *Xtestpointer, const double *tpointer, size_t N_test, size_t p, size_t num_sweeps, std::vector<matrix<double>> &yhats_test_xinfo, vector<vector<tree>> &trees)
+void longbetModel::predict_std(const double *Xtestpointer, const double *tpointer, size_t N_test, size_t p, size_t num_sweeps, std::vector<matrix<double>> &yhats_test_xinfo, vector<vector<tree>> &trees, const std::vector<const double *> *tv)
 {
   std::vector<double> output(this->dim_theta, 0.0);
   for (size_t sweeps = 0; sweeps < num_sweeps; sweeps++)
@@ -301,7 +301,7 @@ void longbetModel::predict_std(const double *Xtestpointer, const double *tpointe
         for (size_t tree_ind  = 0; tree_ind < trees[0].size(); tree_ind++){
           // cout << "data = " << data_ind << ", time = " << time_ind << ", tree = " << tree_ind << endl;
           getThetaForObs_Outsample(output, trees[sweeps][tree_ind],
-          data_ind, time_ind, Xtestpointer, tpointer, N_test, p);
+          data_ind, time_ind, Xtestpointer, tpointer, N_test, p, tv);
 
           yhats_test_xinfo[sweeps][data_ind][time_ind] += output[0];
         }

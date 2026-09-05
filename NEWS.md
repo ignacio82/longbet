@@ -1,3 +1,62 @@
+# longbet 0.5.0
+
+## New: time-varying covariates
+
+`x` has always had to be time-invariant, and the paper names lifting that as
+the obvious next step. `longbet(..., x_tv = , x_tv_trt = )` lifts it. Each is a
+list of n by t matrices laid out like `y`, a single such matrix, or an n by t
+by k array; `x_tv` goes to the prognostic forest and `x_tv_trt` to the
+treatment forest.
+
+**How, and why it is not a rewrite.** The engine already knew how to split on a
+cell-level variable -- that is what splitting on calendar time or on time since
+adoption is. A node holds a set of units together with, for each unit, the list
+of its live columns, so a split on such a variable already sends one unit's
+week 3 left and its week 9 right. There was exactly one of these axes. There
+are now `1 + k`: the time axis, then one per time-varying covariate. Each gets
+its own block of candidate cutpoints in the split likelihood, its own alive
+value set per node, and its own entry in the recorded split rule.
+
+One assumption had to go. The old cell-level partition scanned each unit's
+column list and broke out of the loop at the first column above the cut,
+copying the tail across -- correct only because both time axes increase with
+the column index. An arbitrary covariate does not, so that is now a plain
+two-way partition: O(T) rather than O(log T) on a T of ten to thirty.
+
+**Verified.** With no time-varying covariates supplied, the sampler is
+bit-identical to 0.4.0 -- same beta, sigma, tau, mu and gamma checksums to ten
+decimal places. That was the gate the change had to pass before anything else
+mattered.
+
+**Measured.** A covariate `W` drawn independently for every unit-week, so that
+no unit-level summary of it carries any information about which week is which,
+with a prognostic term `3W` and a true effect of `1.0 + 1.5W`:
+
+| `W` supplied to | residual SD (truth 0.4) | CATT at W=0 (truth 1.0) | at W=1 (truth 2.5) | CATT RMSE |
+|---|---|---|---|---|
+| neither forest | 1.55 | 1.77 | 1.78 | 0.752 |
+| prognostic only | 0.43 | 1.74 | 1.74 | 0.750 |
+| both | 0.41 | **1.00** | **2.50** | **0.027** |
+
+The middle row is the useful one to read twice: putting the covariate in the
+prognostic forest recovers the baseline -- residual SD falls from 1.55 to 0.43
+against a truth of 0.4 -- and does nothing at all for the effect, because the
+effect heterogeneity lives in the treatment forest. Supply it to both and the
+conditional effects come back exactly, a 28-fold reduction in CATT RMSE against
+a model that cannot see it.
+
+Time-varying covariates must be observed in every cell, including cells where
+`y` is `NA`. They have to be passed to `predict.longbet()` as well, in the same
+order: the trees record which axis they split on.
+
+## Fixed: a second copy of the cutpoint decoding
+
+`BART_likelihood_all` decodes the sampled cutpoint index twice, in two branches
+chosen by node size. Only one of them was visible in the first pass over this
+code; the other silently mapped every cell-level split onto the time axis. It
+surfaced as `cannot create std::vector larger than max_size()` rather than a
+wrong number, which was lucky.
+
 # longbet 0.4.0
 
 ## Fixed: the propensity score was accepted and ignored

@@ -40,6 +40,29 @@ public:
     size_t n_t;
     size_t p_t;
 
+    // ---- time-varying covariates -------------------------------------
+    // The engine already knows how to split on one cell-level variable: the
+    // time axis, held in Tpt with its alive values tracked per node. These are
+    // the same thing, k more of them. tv_ptr[a] is an n_y by p_y matrix laid
+    // out like Tpt (cell (i, j) at index i + j * n_y) and tv_values[a] is its
+    // sorted distinct values. Empty by default, in which case every code path
+    // below is the one that existed before.
+    std::vector<const double *> tv_ptr;
+    std::vector<std::vector<double>> tv_values;
+
+    void set_time_varying(const std::vector<const double *> &ptrs,
+                          const std::vector<std::vector<double>> &vals)
+    {
+        this->tv_ptr = ptrs;
+        this->tv_values = vals;
+    }
+
+    // Cell-level axis a: 0 is the time axis, 1..k the time-varying covariates.
+    const double *cell_ptr(size_t a) const
+    {
+        return (a == 0) ? this->Tpt : this->tv_ptr[a - 1];
+    }
+
     X_struct(const double *X_std, const double *y_std, const double *t_std, const double *Tpt, std::vector<double> s_values, 
     size_t n_y, size_t p_y, std::vector<std::vector<size_t>> &Xorder_std,
     std::vector<std::vector<size_t>> &torder_std, std::vector<std::vector<size_t>> &sorder_std,

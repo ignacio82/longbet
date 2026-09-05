@@ -303,19 +303,28 @@ void split_info::split_torder_std(std::unique_ptr<split_info> &split_left,
     std::unique_ptr<State> &state, std::vector<double> &suff_stat,
     std::vector<double> &left_suff_stat, std::vector<double> &right_suff_stat)
 {
-    double split_value = s_values[split_point];
+    // split_var identifies the cell-level axis: 0 the time axis, 1 + a the
+    // a-th time-varying covariate.
+    const std::vector<double> &vals =
+        (split_var == 0) ? s_values : tv_alive[split_var - 1];
+    const double split_value = vals[split_point];
+    const double *cell = x_struct->cell_ptr(split_var);
+
+    // A full two-way partition rather than the scan-and-break this used to be.
+    // The old version relied on each unit's column list being sorted by the
+    // split variable, which holds for the time axis (both calendar time and
+    // time since adoption increase with the column index) and does not hold
+    // for an arbitrary covariate. The cost is O(T) instead of O(log T) per
+    // unit, on a T of ten to thirty.
     for (size_t i = 0; i < sorder_std.size(); i++){
         if(sorder_std[i].size() == 0) {continue;}
         for (size_t j = 0; j < sorder_std[i].size(); j++){
-
-            if (x_struct->Tpt[i + sorder_std[i][j] * state->n_y] <= split_value){
-                split_left->sorder_std[i].push_back(sorder_std[i][j]);
-
-                model->incSuffStat(state, i, sorder_std[i][j], left_suff_stat);
+            const size_t col = sorder_std[i][j];
+            if (cell[i + col * state->n_y] <= split_value){
+                split_left->sorder_std[i].push_back(col);
+                model->incSuffStat(state, i, col, left_suff_stat);
             } else {
-                split_right->sorder_std[i].resize(sorder_std[i].size() - j);
-                std::copy(sorder_std[i].begin() + j, sorder_std[i].end(), split_right->sorder_std[i].begin());
-                break;
+                split_right->sorder_std[i].push_back(col);
             }
         }
     }

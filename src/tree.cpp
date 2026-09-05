@@ -247,7 +247,7 @@ tree::tree_p tree::bn_std(double *x)
     }
 }
 
-tree::tree_p tree::search_bottom_std(const double *X, const double *t, const size_t &i, const size_t &j, const size_t &N, const size_t &N_t)
+tree::tree_p tree::search_bottom_std(const double *X, const double *t, const size_t &i, const size_t &j, const size_t &N, const size_t &N_t, const std::vector<const double *> *tv)
 {
     // X is a matrix, std vector of vectors, stack by column, N rows and p columns
     // // i is index of row in X to predict
@@ -258,23 +258,23 @@ tree::tree_p tree::search_bottom_std(const double *X, const double *t, const siz
     {
         if (this->split_t)
         {
-            // Tpointer point to a matrix for the time of the panel
-            // should be *(t + N * j + i)
-            // if (*(t + N_t * v + j) <= c)
-            if (*(t + N * j + i) <= c)
+            // Cell-level split. v is the axis: 0 the time variable held in t,
+            // 1 + a the a-th time-varying covariate.
+            const double *cell = (this->v == 0) ? t : (*tv)[this->v - 1];
+            if (*(cell + N * j + i) <= c)
             {
-                return l->search_bottom_std(X, t, i, j, N, N_t);
+                return l->search_bottom_std(X, t, i, j, N, N_t, tv);
             } else {
-                return r->search_bottom_std(X, t, i, j, N, N_t);
+                return r->search_bottom_std(X, t, i, j, N, N_t, tv);
             }
         } else {
             // X[v][i], v-th column and i-th row
             // if(X[v][i] <= c){
             if (*(X + N * v + i) <= c)
             {
-                return l->search_bottom_std(X, t, i, j, N, N_t);
+                return l->search_bottom_std(X, t, i, j, N, N_t, tv);
             } else {
-                return r->search_bottom_std(X, t, i, j, N, N_t);
+                return r->search_bottom_std(X, t, i, j, N, N_t, tv);
             }
         }
     } else {
@@ -616,9 +616,9 @@ const size_t &tree_ind, bool control_split_t)
 
         if (this->split_t)
         { 
-            int place_holder = 1;
-            // cout << "split_t, split_point = " << split_point << " value = " << split->s_values[split_point] << endl;
-            this->c = split->s_values[split_point];
+            this->c = (split_var == 0)
+                ? split->s_values[split_point]
+                : split->tv_alive[split_var - 1][split_point];
             // this->c = *(x_struct->t_std + x_struct->n_t * split_var + split->torder_std[split_var][split_point]);
             // while ((split_point < N_torder - 1) && (*(x_struct->t_std + x_struct->n_t * split_var + split->torder_std[split_var][split_point + 1]) == this->c))
             // {
@@ -744,8 +744,15 @@ void BART_likelihood_all(std::unique_ptr<split_info> &split_info,
     size_t loglike_time_start;
     size_t loglike_t_size;
 
+    // One candidate per alive value on each cell-level axis: the time axis
+    // first, then each time-varying covariate.
+    std::vector<size_t> tv_block_size(split_info->tv_alive.size(), 0);
     if (control_split_t){
         loglike_t_size = split_info->s_values.size();
+        for (size_t a = 0; a < split_info->tv_alive.size(); a++){
+            tv_block_size[a] = split_info->tv_alive[a].size();
+            loglike_t_size += tv_block_size[a];
+        }
     } else {
         loglike_t_size = 0;
     }
@@ -782,10 +789,16 @@ void BART_likelihood_all(std::unique_ptr<split_info> &split_info,
 
     if (control_split_t)
     {
-        // cout << "calc time like "  << endl;
         calculate_loglikelihood_time(loglike, loglike_time_start, loglike_max,
         model, x_struct, split_info, state, tree_pointer);
-        // cout << "finish " << endl;
+
+        size_t block = loglike_time_start + split_info->s_values.size();
+        for (size_t a = 0; a < split_info->tv_alive.size(); a++)
+        {
+            calculate_loglikelihood_cellvar(loglike, block, loglike_max, a + 1,
+            model, x_struct, split_info, state, tree_pointer);
+            block += tv_block_size[a];
+        }
     }
 
     // calculate likelihood of no-split option
@@ -888,12 +901,20 @@ void BART_likelihood_all(std::unique_ptr<split_info> &split_info,
             split_point = split_point - 1;
             split_var = split_var + state->p_continuous;
         } else {
-            // split at time variable
+            // split on a cell-level variable
             split_t = true;
-            size_t start;
-            // cout << "ind = " << ind << ", loglike_time_start = " << loglike_time_start << endl;
             ind = ind - loglike_time_start;
+            // Walk the per-axis blocks: the time axis first, then each
+            // time-varying covariate.
             split_var = 0;
+            size_t block_len = split_info->s_values.size();
+            while (ind >= block_len &&
+                   split_var < split_info->tv_alive.size())
+            {
+                ind -= block_len;
+                block_len = split_info->tv_alive[split_var].size();
+                split_var += 1;
+            }
             split_point = ind;
             // for (size_t i = 0; i < (x_struct->t_variable_ind.size() - 1); i++)
             // {
@@ -961,11 +982,18 @@ void BART_likelihood_all(std::unique_ptr<split_info> &split_info,
             split_point = split_point - 1;
             split_var = split_var + state->p_continuous;
         } else {
-            // split at time variable
+            // split on a cell-level variable; see the matching block above.
             split_t = true;
-            size_t start;
             ind = ind - loglike_time_start;
             split_var = 0;
+            size_t block_len = split_info->s_values.size();
+            while (ind >= block_len &&
+                   split_var < split_info->tv_alive.size())
+            {
+                ind -= block_len;
+                block_len = split_info->tv_alive[split_var].size();
+                split_var += 1;
+            }
             split_point = ind;
             // for (size_t i = 0; i < (x_struct->t_variable_ind.size() - 1); i++)
             // {
@@ -1092,6 +1120,49 @@ tree *tree_pointer)
         }
         if (thread_pool.is_active())
             thread_pool.wait();
+    }
+}
+
+// Candidate cutpoints on a time-varying covariate. Identical in structure to
+// calculate_loglikelihood_time -- accumulate the cells at or below each alive
+// value and score the resulting two-way split -- but reading the covariate
+// rather than the time axis. Kept separate rather than folded into that
+// function so the existing time path is untouched byte for byte.
+void calculate_loglikelihood_cellvar(std::vector<double> &loglike,
+size_t loglike_start, double &loglike_max, size_t axis, Model *model,
+std::unique_ptr<X_struct> &x_struct, std::unique_ptr<split_info> &split_info,
+std::unique_ptr<State> &state, tree *tree_pointer)
+{
+    const std::vector<double> &vals = split_info->tv_alive[axis - 1];
+    if (vals.size() < 2) return;   // nothing to cut
+
+    const double *cell = x_struct->cell_ptr(axis);
+
+    std::vector<double> temp_suff_stat(tree_pointer->suff_stat.size());
+    std::fill(temp_suff_stat.begin(), temp_suff_stat.end(), 0.0);
+
+    for (size_t s = 0; s < vals.size() - 1; s++)
+    {
+        for (auto i : split_info->Xorder_std[0])
+        {
+            if (split_info->sorder_std[i].size() == 0) { continue; }
+            for (auto j : split_info->sorder_std[i])
+            {
+                if (cell[i + j * state->n_y] == vals[s])
+                {
+                    model->incSuffStat(state, i, j, temp_suff_stat);
+                }
+            }
+        }
+
+        loglike[loglike_start + s] =
+            model->likelihood(temp_suff_stat, tree_pointer->suff_stat, true, false, state)
+          + model->likelihood(temp_suff_stat, tree_pointer->suff_stat, false, false, state);
+
+        if (loglike[loglike_start + s] > loglike_max)
+        {
+            loglike_max = loglike[loglike_start + s];
+        }
     }
 }
 
@@ -1392,7 +1463,7 @@ std::unique_ptr<State> &state)
     }
 }
 
-void getThetaForObs_Outsample(std::vector<double> &output, tree &tree, size_t x_index, size_t t_index, const double *Xtest, const double *tpointer, size_t N_Xtest, size_t p)
+void getThetaForObs_Outsample(std::vector<double> &output, tree &tree, size_t x_index, size_t t_index, const double *Xtest, const double *tpointer, size_t N_Xtest, size_t p, const std::vector<const double *> *tv)
 {
     // get theta of ONE observation of ALL trees, out sample fit
     // input is a pointer to testing set matrix because it is out of sample
@@ -1402,7 +1473,7 @@ void getThetaForObs_Outsample(std::vector<double> &output, tree &tree, size_t x_
 
     tree::tree_p bn; // pointer to bottom node
 
-    bn = tree.search_bottom_std(Xtest, tpointer, x_index, t_index, N_Xtest, p);
+    bn = tree.search_bottom_std(Xtest, tpointer, x_index, t_index, N_Xtest, p, tv);
     output = bn->theta_vector;
 }
 

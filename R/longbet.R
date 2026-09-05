@@ -17,6 +17,14 @@
 #' @param n_min The minimum node size. (default is 1)
 #' @param sig_knl variance parameter for squared exponential kernel (default is 1).
 #' @param lambda_knl lengthscale parameter for squared exponential kernel (default is 1).
+#' @param x_tv,x_tv_trt optional time-varying covariates for the prognostic and
+#'   treatment forests. Each is a list of n by t matrices laid out like `y`, a
+#'   single such matrix, or an n by t by k array. The sampler treats each as one
+#'   more cell-level axis to split on, which is the same mechanism that already
+#'   lets a tree split on calendar time or on time since adoption -- so a tree
+#'   can send one unit's week 3 left and its week 9 right. Covariates in `x`
+#'   remain time-invariant; these are the ones that are not. They must be
+#'   observed in every cell, including cells where `y` is NA.
 #' @param ps optional vector of estimated propensity scores, one per unit. It
 #'   is appended to the *prognostic* covariates only, which is what Bayesian
 #'   Causal Forest does and why it is robust to targeted selection; the
@@ -50,6 +58,7 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     gp_constant_mean = TRUE,
                     outcome = c("continuous", "binary"),
                     ar1_errors = FALSE, rho_max = 0.95, sigma_u_init = 0.2,
+                    x_tv = NULL, x_tv_trt = NULL,
                     tau_pr = NULL, tau_trt = NULL,
                     max_depth = 50, num_cutpoints = 20,
                     a_scaling = TRUE, b_scaling = FALSE,
@@ -59,6 +68,14 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
 
     outcome <- match.arg(outcome)
     binary_outcome <- identical(outcome, "binary")
+
+    # Time-varying covariates. Each is an n by t matrix laid out like y, and
+    # the sampler treats it as one more cell-level axis to split on -- the same
+    # mechanism that already lets a tree split on calendar time or on time
+    # since adoption. x_tv goes to the prognostic forest, x_tv_trt to the
+    # treatment forest; supply either, both, or neither.
+    x_tv     <- check_tv(x_tv, nrow(as.matrix(y)), ncol(as.matrix(y)), "x_tv")
+    x_tv_trt <- check_tv(x_tv_trt, nrow(as.matrix(y)), ncol(as.matrix(y)), "x_tv_trt")
 
     if(!("matrix" %in% class(x))){
         if (verbose) message("input x is not a matrix; converting.")
@@ -364,6 +381,8 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     gamma_prior_a = gamma_prior_a,
                     gamma_prior_b = gamma_prior_b,
                     gp_constant_mean = gp_constant_mean,
+                    x_tv = if (length(x_tv)) x_tv else NULL,
+                    x_tv_trt = if (length(x_tv_trt)) x_tv_trt else NULL,
                     y_missing = if (n_miss > 0) y_miss * 1.0 else NULL,
                     binary_outcome = binary_outcome,
                     binary_offset = if (binary_outcome) meany else 0,
@@ -371,6 +390,8 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     sigma_u_init = sigma_u_init)
     class(obj) = "longbet"
 
+    obj$n_tv_pr = length(x_tv)
+    obj$n_tv_trt = length(x_tv_trt)
     obj$use_ps = use_ps
     obj$ps = if (use_ps) ps else NULL
     obj$pcat = pcat
@@ -390,6 +411,35 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     return(obj)
 }
 
+
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+# Time-varying covariates arrive as a list of n by t matrices, a single n by t
+# matrix, or an n by t by k array. Normalise to a list of numeric matrices and
+# check the shape, because a silent recycle here would be invisible in the
+# output and wrong everywhere.
+check_tv <- function(x_tv, n, tt, what) {
+    if (is.null(x_tv)) return(list())
+    if (is.array(x_tv) && length(dim(x_tv)) == 3) {
+        x_tv <- lapply(seq_len(dim(x_tv)[3]), function(k) x_tv[, , k])
+    }
+    if (!is.list(x_tv)) x_tv <- list(x_tv)
+    out <- vector("list", length(x_tv))
+    for (k in seq_along(x_tv)) {
+        m <- as.matrix(x_tv[[k]])
+        if (nrow(m) != n || ncol(m) != tt) {
+            stop(what, "[[", k, "]] is ", nrow(m), " by ", ncol(m),
+                 "; it must match the panel, ", n, " by ", tt, ". \n")
+        }
+        if (any(!is.finite(m))) {
+            stop(what, "[[", k, "]] contains missing or infinite values. ",
+                 "Covariates must be observed even where the outcome is not. \n")
+        }
+        storage.mode(m) <- "double"
+        out[[k]] <- m
+    }
+    out
+}
 
 # Put the propensity score after the continuous columns and before the
 # categorical ones, so pcat keeps meaning what it meant.

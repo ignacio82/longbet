@@ -1,8 +1,10 @@
 # Bayesian Ensemble Trees for Causal Inference on Longitudinal Data (LongBet)
 
 > **This is a fork of [google/longbet](https://github.com/google/longbet).**
-> It adds unit-level random intercepts, unbalanced-panel support, binary
-> (probit) outcomes and a non-zero-mean Gaussian process; it fixes the
+> It adds time-varying covariates, unit-level random intercepts,
+> unbalanced-panel support, binary (probit) outcomes and a non-zero-mean
+> Gaussian process; it wires up the propensity score argument that upstream
+> accepts and ignores; it fixes the
 > covariance factorisation used when sampling and extrapolating the shared time
 > factor, makes regularization independent of the units of the outcome, and
 > makes the projection reproducible. [NEWS.md](NEWS.md) has the rationale and
@@ -48,7 +50,7 @@ random_seed = 0, parallel = TRUE, verbose = FALSE,
 outcome = c("continuous", "binary"),
 gp_constant_mean = TRUE,
 ar1_errors = FALSE, rho_max = 0.95, sigma_u_init = 0.2,
-ps = NULL)
+ps = NULL, x_tv = NULL, x_tv_trt = NULL)
 ```
 
 ### Arguments
@@ -77,6 +79,7 @@ outcome: "continuous" (Gaussian) or "binary" (probit by Albert-Chib augmentation
 gp_constant_mean: give the time-factor Gaussian process a constant mean estimated from the data rather than a mean of zero. Only matters when extrapolating, where a zero mean makes long projections revert to "no effect" because the prior says so.
 ar1_errors: add a transitory AR(1) error on top of the unit intercept. Off by default, and see NEWS.md before turning it on -- it recovers rho accurately and makes conditional effects worse.
 
+x_tv, x_tv_trt: time-varying covariates for the prognostic and treatment forests. A list of n by t matrices laid out like y, one such matrix, or an n by t by k array. Covariates in x stay time-invariant; these are the ones that are not. Must be observed in every cell, including cells where y is NA, and must be passed to predict.longbet() as well.
 ps: estimated propensity scores, one per unit, appended to the *prognostic* covariates only. This is the BCF adjustment for targeted selection, and it was silently ignored through 0.3.1. Worth about 17% on CATT RMSE with a good score; worse than nothing with a badly specified one.
 
 `y` may contain `NA` for periods in which a unit was not observed; those cells

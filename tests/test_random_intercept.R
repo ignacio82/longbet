@@ -252,4 +252,60 @@ ok("memory drops by more than 5x",
    sprintf("(%.1f MB -> %.1f MB)", object.size(p_full) / 1e6,
            object.size(p_sum) / 1e6))
 
+
+
+# ---- 15. time-varying covariates ---------------------------------------
+# W is drawn per unit-week and independent across cells, so no unit-level
+# summary of it says anything about which week is which. Only a tree that can
+# split one unit's week 3 from its week 9 can use it.
+cat("\n-- time-varying covariates --\n")
+set.seed(404)
+W <- matrix(rbinom(n * Tn, 1, 0.5), n, Tn)
+tau_w <- (1.0 + 1.5 * W) * (S > 0)
+y_w <- matrix(2 * x1 + 0.5 * x2, n, Tn) + 3.0 * W + tau_w +
+       matrix(rnorm(n * Tn, 0, 0.4), n, Tn)
+
+fit_tv <- function(tv_pr, tv_trt) {
+  f <- longbet(y = y_w, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+               x_tv = tv_pr, x_tv_trt = tv_trt, num_sweeps = 80,
+               num_burnin = 30, num_trees_pr = 20, num_trees_trt = 20,
+               random_intercept = FALSE)
+  p <- predict.longbet(f, x, x, z, t = 1:Tn, x_tv = tv_pr,
+                       x_tv_trt = tv_trt, random_seed = 1)
+  ct <- get_catt(p)$catt
+  list(sd = resid_sd(f), w0 = mean(ct[z == 1 & W == 0]),
+       w1 = mean(ct[z == 1 & W == 1]))
+}
+r_none <- fit_tv(NULL, NULL)
+r_pr   <- fit_tv(list(W), NULL)
+r_both <- fit_tv(list(W), list(W))
+
+ok("without it, the residual carries the covariate", r_none$sd > 1.0,
+   sprintf("(%.3f against a true 0.4)", r_none$sd))
+ok("in the prognostic forest it recovers the baseline",
+   abs(r_pr$sd - 0.4) < 0.15, sprintf("(%.3f)", r_pr$sd))
+ok("without it in the treatment forest the heterogeneity is invisible",
+   abs(r_pr$w0 - r_pr$w1) < 0.2,
+   sprintf("(%.2f vs %.2f, truth 1.0 vs 2.5)", r_pr$w0, r_pr$w1))
+ok("in both forests the effect heterogeneity is recovered",
+   abs(r_both$w0 - 1.0) < 0.2 && abs(r_both$w1 - 2.5) < 0.2,
+   sprintf("(%.2f and %.2f)", r_both$w0, r_both$w1))
+ok("a wrong-shaped x_tv is an error",
+   inherits(try(longbet(y = y_w, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+                        x_tv = list(W[, -1]), num_sweeps = 5, num_burnin = 2,
+                        num_trees_pr = 3, num_trees_trt = 3),
+                silent = TRUE), "try-error"))
+f_tv <- longbet(y = y_w, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+                x_tv = list(W), num_sweeps = 20, num_burnin = 8,
+                num_trees_pr = 5, num_trees_trt = 5, random_intercept = FALSE)
+ok("the fit records how many were used", f_tv$n_tv_pr == 1 && f_tv$n_tv_trt == 0)
+ok("predicting without them is an error",
+   inherits(try(predict.longbet(f_tv, x, x, z, t = 1:Tn, random_seed = 1),
+                silent = TRUE), "try-error"))
+ok("an n by t by k array is accepted",
+   !inherits(try(longbet(y = y_w, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
+                         x_tv = array(W, c(n, Tn, 1)), num_sweeps = 10,
+                         num_burnin = 4, num_trees_pr = 3, num_trees_trt = 3),
+                 silent = TRUE), "try-error"))
+
 cat("\nAll tests passed.\n")

@@ -14,6 +14,9 @@ public:
     matrix<size_t> Xorder_std;
     matrix<size_t> sorder_std;
     std::vector<double> s_values;
+    // Alive values for each time-varying covariate, same role as s_values for
+    // the time axis. Empty unless the caller supplied any.
+    std::vector<std::vector<double>> tv_alive;
 
     std::vector<size_t> X_counts;
     std::vector<size_t> X_num_unique;
@@ -28,6 +31,7 @@ public:
 
       this->sorder_std = sorder_std;
       this->s_values = s_values;
+      this->tv_alive = x_struct->tv_values;
 
       this->N_Xorder = Xorder_std[0].size();
       this->p_Xorder = Xorder_std.size();
@@ -45,20 +49,29 @@ public:
         // copy Xorder
         for (size_t i = 0; i < Xorder_std.size(); i++){
           std::copy(parent->Xorder_std[i].begin(), parent->Xorder_std[i].end(), this->Xorder_std[i].begin());
-          std::copy(parent->Xorder_std[i].begin(), parent->Xorder_std[i].end(), this->Xorder_std[i].begin());
         }
 
-        if (left)
-        { 
-          this->s_values.resize(split_point + 1);
-          std::copy(parent->s_values.begin(), parent->s_values.begin() + split_point + 1, this->s_values.begin());
-        } else {
-          this->s_values.resize(parent->s_values.size() - split_point - 1);
-          std::copy(parent->s_values.begin() + split_point + 1, parent->s_values.end(), this->s_values.begin());
-        }
-      } else {
-        // copy s_values
+        // split_var identifies the cell-level axis: 0 the time axis, 1 + a the
+        // a-th time-varying covariate. Only that axis's value set is cut; the
+        // others carry over whole.
         this->s_values = parent->s_values;
+        this->tv_alive = parent->tv_alive;
+
+        std::vector<double> &parent_vals = (split_var == 0)
+            ? parent->s_values : parent->tv_alive[split_var - 1];
+        std::vector<double> cut;
+        if (left)
+        {
+          cut.assign(parent_vals.begin(), parent_vals.begin() + split_point + 1);
+        } else {
+          cut.assign(parent_vals.begin() + split_point + 1, parent_vals.end());
+        }
+        if (split_var == 0) { this->s_values = cut; }
+        else                { this->tv_alive[split_var - 1] = cut; }
+      } else {
+        // copy value sets
+        this->s_values = parent->s_values;
+        this->tv_alive = parent->tv_alive;
         if (left) 
         {
           ini_xinfo_sizet(this->Xorder_std, split_point + 1, parent->p_Xorder);

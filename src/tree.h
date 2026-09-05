@@ -168,7 +168,7 @@ public:
 
     tree_p bn_std(double *x); // find Bottom Node, std version, compare
 
-    tree_p search_bottom_std(const double *X, const double *t, const size_t &i, const size_t &j, const size_t &N, const size_t &N_t);
+    tree_p search_bottom_std(const double *X, const double *t, const size_t &i, const size_t &j, const size_t &N, const size_t &N_t, const std::vector<const double *> *tv = 0);
 
     void rg(size_t v, size_t *L, size_t *U); //recursively find region [L,U] for var v
     //node functions--------------------
@@ -205,6 +205,11 @@ public:
 
     friend void calculate_loglikelihood_time(std::vector<double> &loglike,
     size_t &loglike_start, double &loglike_max, Model *model,
+    std::unique_ptr<X_struct> &x_struct, std::unique_ptr<split_info> &split_info,
+    std::unique_ptr<State> &state, tree *tree_pointer);
+
+    friend void calculate_loglikelihood_cellvar(std::vector<double> &loglike,
+    size_t loglike_start, double &loglike_max, size_t axis, Model *model,
     std::unique_ptr<X_struct> &x_struct, std::unique_ptr<split_info> &split_info,
     std::unique_ptr<State> &state, tree *tree_pointer);
 
@@ -265,7 +270,7 @@ std::ostream &operator<<(std::ostream &, const tree &);
 
 // void predict_from_datapointers(size_t tree_ind, Model *model, std::unique_ptr<State> &state, std::unique_ptr<X_struct> &x_struct);
 
-void getThetaForObs_Outsample(std::vector<double> &output, tree &tree, size_t x_index, size_t t_index, const double *Xtest, const double *tpointer, size_t N_Xtest, size_t p);
+void getThetaForObs_Outsample(std::vector<double> &output, tree &tree, size_t x_index, size_t t_index, const double *Xtest, const double *tpointer, size_t N_Xtest, size_t p, const std::vector<const double *> *tv = 0);
 
 void getThetaForObs_Outsample_ave(matrix<double> &output, std::vector<tree> &tree, size_t x_index, const double *Xtest, size_t N_Xtest, size_t p);
 

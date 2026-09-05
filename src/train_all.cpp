@@ -66,7 +66,9 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
                     bool binary_outcome = false,
                     double binary_offset = 0.0,
                     bool ar1_errors = false, double rho_max = 0.95,
-                    double sigma_u_init = 0.2)
+                    double sigma_u_init = 0.2,
+                    Rcpp::Nullable<Rcpp::List> x_tv = R_NilValue,
+                    Rcpp::Nullable<Rcpp::List> x_tv_trt = R_NilValue)
 {
     // cout << "start training longbet" << endl;
     auto start = system_clock::now();
@@ -353,6 +355,41 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     // nobody is treated yet.
     x_struct_gp->ini_cov_kernel_s(sig_knl, lambda_knl);
 
+    // Time-varying covariates. Each is an N by p_y matrix laid out like the
+    // panel; the sampler treats it as one more cell-level axis to split on,
+    // exactly as it already treats calendar time and time since adoption.
+    // Held in these vectors so the Rcpp matrices outlive the X_structs.
+    std::vector<Rcpp::NumericMatrix> tv_keep, tv_trt_keep;
+    std::vector<const double *> tv_ptrs, tv_trt_ptrs;
+    std::vector<std::vector<double>> tv_vals, tv_trt_vals;
+
+    auto load_tv = [&](Rcpp::Nullable<Rcpp::List> src,
+                       std::vector<Rcpp::NumericMatrix> &keep,
+                       std::vector<const double *> &ptrs,
+                       std::vector<std::vector<double>> &vals) {
+        if (src.isNull()) return;
+        Rcpp::List l(src);
+        for (int k = 0; k < l.size(); k++)
+        {
+            Rcpp::NumericMatrix m = Rcpp::as<Rcpp::NumericMatrix>(l[k]);
+            keep.push_back(m);
+        }
+        for (size_t k = 0; k < keep.size(); k++)
+        {
+            ptrs.push_back(&keep[k][0]);
+            std::vector<double> v(keep[k].begin(), keep[k].end());
+            std::sort(v.begin(), v.end());
+            v.erase(std::unique(v.begin(), v.end()), v.end());
+            vals.push_back(v);
+        }
+    };
+    load_tv(x_tv, tv_keep, tv_ptrs, tv_vals);
+    load_tv(x_tv_trt, tv_trt_keep, tv_trt_ptrs, tv_trt_vals);
+
+    x_struct_pr->set_time_varying(tv_ptrs, tv_vals);
+    x_struct_trt->set_time_varying(tv_trt_ptrs, tv_trt_vals);
+    x_struct_gp->set_time_varying(tv_trt_ptrs, tv_trt_vals);
+
     size_t t_size = state->beta_size;
     matrix<double> resid_info;
     ini_matrix(resid_info, t_size, num_sweeps);
@@ -385,8 +422,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
 
     // predict tauhats and muhats
     // cout << "predict " << endl;
-    model_pr->predict_std(Xpointer, tpointer_mu, N, p_y, num_sweeps, muhats_xinfo, *trees_pr);
-    model_trt->predict_std(Xpointer_tau, tpointer_tau, N, p_y, num_sweeps, tauhats_xinfo, *trees_trt);
+    model_pr->predict_std(Xpointer, tpointer_mu, N, p_y, num_sweeps, muhats_xinfo, *trees_pr, &tv_ptrs);
+    model_trt->predict_std(Xpointer_tau, tpointer_tau, N, p_y, num_sweeps, tauhats_xinfo, *trees_trt, &tv_trt_ptrs);
     // cout << "finish predict " << endl;
 
     // R Objects to Return
@@ -503,6 +540,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
         Rcpp::Named("rho") = rho_out,
         Rcpp::Named("sigma_u") = sigma_u_out,
         Rcpp::Named("n_missing") = n_missing_cells,
+        Rcpp::Named("n_tv_pr") = (int) tv_ptrs.size(),
+        Rcpp::Named("n_tv_trt") = (int) tv_trt_ptrs.size(),
         Rcpp::Named("sigma0_draws") = sigma0_draws,
         Rcpp::Named("sigma1_draws") = sigma1_draws,
         Rcpp::Named("b_draws") = b_draws,

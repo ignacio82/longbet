@@ -4,6 +4,8 @@
 #' @param x An input matrix for size n by p1. Column order matters: continuos features should all bgo before of categorical.
 #' @param z n by p_y treatment matrix indicating whether each unit get treated at each step, should match the training period
 #' @param gp bool, predict time coefficient beta using gaussian process
+#' @param x_tv,x_tv_trt time-varying covariates, supplied exactly as at fit
+#'   time. See `longbet()`.
 #' @param ps propensity scores for the rows of `x`, required when the model was
 #'   fit with `ps` and `x` is supplied without that column. Defaults to the
 #'   training scores when predicting on the training rows.
@@ -27,7 +29,25 @@
 predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
                             lambda = NULL, random_seed = 1, ps = NULL,
                             summary_only = FALSE, alpha = 0.05,
+                            x_tv = NULL, x_tv_trt = NULL,
                             verbose = FALSE, ...) {
+
+    # Time-varying covariates have to be supplied again, in the same order as
+    # at fit time: the trees record which cell-level axis they split on.
+    x_tv     <- check_tv(x_tv, nrow(as.matrix(x)), ncol(as.matrix(z)), "x_tv")
+    x_tv_trt <- check_tv(x_tv_trt, nrow(as.matrix(x)), ncol(as.matrix(z)), "x_tv_trt")
+    if (length(x_tv) != (model$n_tv_pr %||% 0)) {
+        stop("this model was fit with ", model$n_tv_pr %||% 0,
+             " time-varying prognostic covariate(s); predict() was given ",
+             length(x_tv), ". \n")
+    }
+    if (length(x_tv_trt) != (model$n_tv_trt %||% 0)) {
+        stop("this model was fit with ", model$n_tv_trt %||% 0,
+             " time-varying treatment covariate(s); predict() was given ",
+             length(x_tv_trt), ". \n")
+    }
+    if (length(x_tv) == 0) x_tv <- NULL
+    if (length(x_tv_trt) == 0) x_tv_trt <- NULL
 
     # If the fit used a propensity score, the prognostic covariates it was
     # trained on carry an extra column. Rebuild it here rather than making the
@@ -97,11 +117,27 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
 
     t_mod <- t( apply(z, 1, cumsum) )
     
-    obj_mu = .Call(`_longbet_predict_longbet`, x, t_con, model$model_list$tree_pnt_pr)
+    obj_mu = .Call(`_longbet_predict_longbet`, x, t_con,
+        model$model_list$tree_pnt_pr, x_tv)
 
-    obj_tau = .Call(`_longbet_predict_longbet`, x_trt, t_mod, model$model_list$tree_pnt_trt)
+    obj_tau = .Call(`_longbet_predict_longbet`, x_trt, t_mod,
+        model$model_list$tree_pnt_trt, x_tv_trt)
     
-    obj_tau0 = .Call(`_longbet_predict_longbet`, x_trt, matrix(rep(0, nrow(x)), ncol = 1), model$model_list$tree_pnt_trt)
+    # nu(X, S = 0). Without time-varying covariates in the treatment forest
+    # this is one value per unit, so a single column suffices. With them it
+    # varies by period too, and the whole panel has to be evaluated with the
+    # time-since-adoption axis pinned to zero.
+    if (is.null(x_tv_trt)) {
+        obj_tau0 = .Call(`_longbet_predict_longbet`, x_trt,
+            matrix(rep(0, nrow(x)), ncol = 1),
+            model$model_list$tree_pnt_trt, NULL)
+        tau0_wide <- FALSE
+    } else {
+        obj_tau0 = .Call(`_longbet_predict_longbet`, x_trt,
+            matrix(0, nrow(x), ncol(z)),
+            model$model_list$tree_pnt_trt, x_tv_trt)
+        tau0_wide <- TRUE
+    }
 
     # Match post treatment periods
     n <- nrow(z)
@@ -162,9 +198,11 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
         # muhats0 + tauhats. Neither includes the unit random intercept, which
         # predict() cannot attach to rows of a new x -- add
         # rowMeans(fit$gamma_draws[, post]) yourself for in-sample fits.
-        obj$muhats0[,, i - num_burnin] = matrix(obj_mu$preds[,i], n, p) * (model$a_draws[i]) + model$meany +  matrix(rep(obj_tau0$preds[,i], p), ncol = p) * model$b_draws[i,1] * model$beta_values[1, i]
+        tau0_i <- if (tau0_wide) matrix(obj_tau0$preds[,i], n, p) else
+                  matrix(rep(obj_tau0$preds[,i], p), ncol = p)
+        obj$muhats0[,, i - num_burnin] = matrix(obj_mu$preds[,i], n, p) * (model$a_draws[i]) + model$meany +  tau0_i * model$b_draws[i,1] * model$beta_values[1, i]
         # obj$tauhats[,, i - num_burnin] = matrix(obj_tau$preds[,i], n, p) * (model$b_draws[i,2] * beta_preds[,,i] - model$b_draws[i,1] * model$beta_draws[1, i]) # * beta_preds[,,i]
-        obj$tauhats[,, i - num_burnin] = model$b_draws[i,2] * beta_preds[,,i] * matrix(obj_tau$preds[,i], n, p)  - matrix(rep(model$b_draws[i,1] * model$beta_values[1, i] * obj_tau0$preds[,i], p), ncol = p)
+        obj$tauhats[,, i - num_burnin] = model$b_draws[i,2] * beta_preds[,,i] * matrix(obj_tau$preds[,i], n, p)  - model$b_draws[i,1] * model$beta_values[1, i] * tau0_i
         # TODO: change tauhat to b1 * beta_s * tau_s - b0 * beta_0 * tau_0 when tau can split on post-treatment time
     }
     obj$beta_values <- model$beta_values
