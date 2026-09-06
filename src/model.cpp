@@ -355,10 +355,6 @@ void longbetModel::update_random_intercept(std::unique_ptr<State> &state)
                - state->a * state->mu_fit[i][j]
                - b * state->beta_fit[i][j] * state->tau_fit[i][j]
                - (state->treat_effect_re && treated ? state->delta[i] : 0.0);
-      if (state->random_intercept && state->ar1_errors)
-      {
-        r -= state->u[j * state->n_y + i];
-      }
 
       prec += 1.0 / s2;
       wsum += r / s2;
@@ -401,145 +397,6 @@ static double rtruncnorm_lower(double a, std::mt19937 &gen)
   return a;
 }
 
-// Forward-filter backward-sample the AR(1) error path for every unit, then
-// draw its persistence and innovation variance.
-//
-// Per unit the model is a scalar linear Gaussian state space,
-//   u_t = rho * u_{t-1} + e_t,   e_t ~ N(0, sigma_u^2)
-//   r_t = u_t + eps_t,           eps_t ~ N(0, sigma_{z_it}^2)
-// with r_t the residual against everything except u, and a stationary start.
-// Cells with no observation contribute no update, so an unbalanced panel is
-// handled by skipping the correction step for them. Cost is O(n * T).
-//
-// rho is bounded well away from 1 on purpose. A near-random-walk u is smooth
-// enough in t to mimic a treatment effect that turns on at a known time, and
-// nothing else in the likelihood would object. The bound, plus the fact that
-// tau is pooled across units through beta_S while u is unit-specific, is what
-// keeps the latent path from eating the effect.
-void longbetModel::update_ar1(std::unique_ptr<State> &state)
-{
-  if (!state->ar1_errors) return;
-
-  const size_t n = state->n_y;
-  const size_t T = state->p_y;
-  const double su2 = state->sigma_u * state->sigma_u;
-  const double rho = state->rho;
-
-  if (su2 <= 0.0) return;
-
-  const double stat_var = su2 / std::max(1e-8, 1.0 - rho * rho);
-
-  std::normal_distribution<double> norm(0.0, 1.0);
-  std::vector<double> a(T), R(T), m(T), C(T);
-
-  double ss_num = 0.0, ss_den = 0.0, ss_innov = 0.0;
-  size_t n_innov = 0;
-
-  for (size_t i = 0; i < n; i++)
-  {
-    // ---- forward filter ----
-    for (size_t t = 0; t < T; t++)
-    {
-      const size_t k = t * n + i;
-      a[t] = (t == 0) ? 0.0 : rho * m[t - 1];
-      R[t] = (t == 0) ? stat_var : rho * rho * C[t - 1] + su2;
-
-      if (state->y_missing[k] == 1)
-      {
-        m[t] = a[t]; C[t] = R[t];          // nothing observed, just propagate
-        continue;
-      }
-
-      const bool treated = (*(state->z + k) == 1);
-      const double s2 = pow(treated ? state->sigma_vec[1] : state->sigma_vec[0], 2);
-      const double b  = treated ? state->b_vec[1] : state->b_vec[0];
-
-      // Residual against everything except u (SUR offset removed as well).
-      const double r = state->y_orig[k]
-                     - state->sur_offset[k]
-                     - state->a * state->mu_fit[i][t]
-                     - b * state->beta_fit[i][t] * state->tau_fit[i][t]
-                     - state->gamma[i]
-                     - (state->treat_effect_re && treated ? state->delta[i] : 0.0);
-
-      const double Q = R[t] + s2;
-      const double A = R[t] / Q;
-      m[t] = a[t] + A * (r - a[t]);
-      C[t] = R[t] * s2 / Q;
-    }
-
-    // ---- backward sample ----
-    double draw = m[T - 1] + sqrt(std::max(0.0, C[T - 1])) * norm(state->gen);
-    state->u[(T - 1) * n + i] = draw;
-    for (size_t t = T - 1; t-- > 0;)
-    {
-      const double B = (R[t + 1] > 0) ? rho * C[t] / R[t + 1] : 0.0;
-      const double h = m[t] + B * (draw - a[t + 1]);
-      const double H = std::max(0.0, C[t] * (1.0 - B * rho));
-      draw = h + sqrt(H) * norm(state->gen);
-      state->u[t * n + i] = draw;
-    }
-
-    // ---- sufficient statistics for rho and sigma_u ----
-    for (size_t t = 1; t < T; t++)
-    {
-      const double prev = state->u[(t - 1) * n + i];
-      const double cur  = state->u[t * n + i];
-      ss_num += cur * prev;
-      ss_den += prev * prev;
-      n_innov++;
-    }
-  }
-
-  // ---- rho | u, truncated to (-rho_max, rho_max) ----
-  if (ss_den > 0)
-  {
-    const double mean = ss_num / ss_den;
-    const double sd   = sqrt(su2 / ss_den);
-    double prop = mean + sd * norm(state->gen);
-    for (int tries = 0; tries < 50 && fabs(prop) >= state->rho_max; tries++)
-    {
-      prop = mean + sd * norm(state->gen);
-    }
-    if (fabs(prop) < state->rho_max) state->rho = prop;
-  }
-
-  // ---- sigma_u^2 | u, rho ~ InvGamma(1 + n_innov/2, 0.1 + SS/2) ----
-  for (size_t i = 0; i < n; i++)
-  {
-    for (size_t t = 1; t < T; t++)
-    {
-      const double e = state->u[t * n + i] - state->rho * state->u[(t - 1) * n + i];
-      ss_innov += e * e;
-    }
-  }
-  if (n_innov > 0)
-  {
-    const double shape = 1.0 + 0.5 * (double)n_innov;
-    const double rate  = 0.1 + 0.5 * ss_innov;
-    std::gamma_distribution<double> gam(shape, 1.0 / rate);
-    state->sigma_u = 1.0 / sqrt(gam(state->gen));
-  }
-}
-
-// Redraw the outcome at the top of a sweep.
-//
-// Two things happen here, and they are the same thing seen twice.
-//
-// Unobserved cells in an unbalanced panel are filled from their full
-// conditional, y_it | theta ~ N(a*mu + b_z*beta*tau + gamma_i, sigma_z^2), so
-// the tree-growing code, the sufficient statistics, the variance draws and the
-// Gaussian process update all run on a complete panel without modification.
-// The completed values are draws rather than point imputations, so the extra
-// uncertainty is carried rather than hidden. Alternating y_mis | theta with
-// theta | y_obs, y_mis is a valid Gibbs sampler on the joint posterior; it is
-// correct as long as missingness does not depend on the unobserved outcome
-// given the model.
-//
-// For a binary outcome the same hook carries Albert and Chib augmentation: the
-// latent normal is drawn truncated to the positive half-line when y = 1 and
-// the negative half-line when y = 0. With sigma held at 1 that makes the model
-// a probit, and everything downstream is unchanged.
 void longbetModel::draw_latent_outcome(std::unique_ptr<State> &state)
 {
   if (!state->has_missing && !state->binary_outcome) return;
@@ -564,7 +421,6 @@ void longbetModel::draw_latent_outcome(std::unique_ptr<State> &state)
       const double fitted = state->a * state->mu_fit[i][j]
                           + b * state->beta_fit[i][j] * state->tau_fit[i][j]
                           + state->gamma[i]
-                          + (state->ar1_errors ? state->u[k] : 0.0)
                           + state->sur_offset[k]
                           + (state->treat_effect_re && treated ? state->delta[i] : 0.0);
 
@@ -622,8 +478,7 @@ void longbetModel::update_delta(std::unique_ptr<State> &state)
                      - state->sur_offset[k]
                      - state->a * state->mu_fit[i][j]
                      - b * state->beta_fit[i][j] * state->tau_fit[i][j]
-                     - state->gamma[i]
-                     - (state->ar1_errors ? state->u[k] : 0.0);
+                     - state->gamma[i];
       prec += 1.0 / sig12;
       wsum += r / sig12;
     }

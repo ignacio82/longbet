@@ -209,7 +209,6 @@ void mcmc_one_sweep(size_t sweeps, SweepCtx &c)
       // the unit's level out of the residual it sees.
       c.model_ps->update_delta((*c.state));
       if (c.delta_own_scale) c.model_ps->update_sigma_delta((*c.state));
-      c.model_ps->update_ar1((*c.state));
     }
     if (c.delta_xinfo)
       std::copy((*c.state)->delta.begin(), (*c.state)->delta.end(),
@@ -299,7 +298,6 @@ void mcmc_loop_multi(std::vector<SweepCtx> &ctx, size_t num_sweeps,
                     - st.a * st.mu_fit[i][j]
                     - b * st.beta_fit[i][j] * st.tau_fit[i][j]
                     - st.gamma[i]
-                    - (st.ar1_errors ? st.u[k] : 0.0)
                     - (st.treat_effect_re && treated ? st.delta[i] : 0.0);
         }
       }

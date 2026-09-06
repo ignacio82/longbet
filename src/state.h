@@ -72,11 +72,6 @@ public:
     // becomes mu(X_i,t) - rho*mu(X_i,t-1), a difference of two leaf values
     // that sit in different leaves once a tree splits on time, and the leaf
     // sufficient statistics stop being sums over independent observations.
-    bool ar1_errors;
-    std::vector<double> u;            // n_y * p_y latent AR(1) path
-    double rho;                       // persistence
-    double sigma_u;                   // innovation sd
-    double rho_max;                   // hard bound, keeps u from random-walking
 
     bool random_intercept;
     std::vector<double> gamma;        // length n_y
@@ -238,7 +233,6 @@ public:
             {
                 const size_t k = j * this->n_y + i;
                 this->y_work[k] = this->y_orig[k] - this->gamma[i]
-                                - (this->ar1_errors ? this->u[k] : 0.0)
                                 - this->sur_offset[k]
                                 - (this->treat_effect_re ?
                                    this->delta[i] * (*(this->z + k)) : 0.0);
@@ -325,11 +319,6 @@ public:
         this->binary_outcome   = false;
         this->y_binary         = std::vector<int>(N * p_y, 0);
         this->binary_offset    = 0.0;
-        this->ar1_errors       = false;
-        this->u                = std::vector<double>(N * p_y, 0.0);
-        this->rho              = 0.0;
-        this->sigma_u          = 0.0;
-        this->rho_max          = 0.95;
         this->sigma_gamma      = 1.0;   // diffuse start, adapts after sweep 1
         this->gamma_prior_a    = 1.0;
         this->gamma_prior_b    = 0.1;

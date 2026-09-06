@@ -153,25 +153,6 @@ ok("binary y must be 0/1",
                         outcome = "binary", num_sweeps = 5, num_burnin = 2),
                 silent = TRUE), "try-error"))
 
-# ---- 9. AR(1) errors recover rho ---------------------------------------
-cat("\n-- AR(1) errors --\n")
-set.seed(53); rho_true <- 0.7
-uu <- matrix(0, n, Tn); uu[, 1] <- rnorm(n, 0, 0.5 / sqrt(1 - rho_true^2))
-for (tt in 2:Tn) uu[, tt] <- rho_true * uu[, tt - 1] + rnorm(n, 0, 0.5)
-y_ar <- y + uu
-f_ar <- longbet(y = y_ar, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
-                num_sweeps = 120, num_burnin = 40, num_trees_pr = 20,
-                num_trees_trt = 20, random_intercept = TRUE, ar1_errors = TRUE)
-ok("rho is recovered", abs(f_ar$rho - rho_true) < 0.15,
-   sprintf("(%.2f vs %.2f)", f_ar$rho, rho_true))
-ok("rho respects its bound", abs(f_ar$rho) < 0.95)
-f_no <- longbet(y = y_ar, x = x, x_trt = x, z = z, t = 1:Tn, pcat = 1,
-                num_sweeps = 120, num_burnin = 40, num_trees_pr = 20,
-                num_trees_trt = 20, random_intercept = TRUE, ar1_errors = FALSE)
-ok("ar1_errors = FALSE leaves rho at zero", f_no$rho == 0)
-
-
-
 # ---- 10. a unit treated from the first observed period ------------------
 # This used to segfault, on this fork and upstream: beta_size becomes p_y + 1
 # when get_trt_time() dates an adoption one step before the panel starts, and

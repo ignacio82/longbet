@@ -53,7 +53,6 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
                     Rcpp::List y_missing_list,
                     Rcpp::LogicalVector binary_vec,
                     Rcpp::NumericVector binary_offset_vec,
-                    bool ar1_errors, double rho_max, double sigma_u_init,
                     Rcpp::Nullable<Rcpp::List> x_tv,
                     Rcpp::Nullable<Rcpp::List> x_tv_trt,
                     double sur_prior_var,
@@ -210,11 +209,8 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
         State &st = *states[m];
         st.random_intercept = random_intercept;
         st.gp_constant_mean = gp_constant_mean;
-        st.ar1_errors = ar1_errors;
-        st.rho_max = rho_max;
         st.treat_effect_re = treat_effect_re;
         st.delta_prior_b   = delta_scale;
-        if (ar1_errors) { st.sigma_u = sigma_u_init; st.rho = 0.3; }
         st.binary_outcome = binary_m;
         if (binary_m)
         {
@@ -366,9 +362,6 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
             Rcpp::Named("random_intercept") = random_intercept,
             Rcpp::Named("gp_constant_mean") = gp_constant_mean,
             Rcpp::Named("binary_outcome") = binary_m,
-            Rcpp::Named("ar1_errors") = ar1_errors,
-            Rcpp::Named("rho") = st.rho,
-            Rcpp::Named("sigma_u") = st.sigma_u,
             Rcpp::Named("n_missing") = n_missing_cells,
             Rcpp::Named("n_tv_pr") = (int) tv_ptrs.size(),
             Rcpp::Named("n_tv_trt") = (int) tv_trt_ptrs.size(),

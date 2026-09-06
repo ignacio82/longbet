@@ -65,8 +65,6 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
                     Rcpp::Nullable<Rcpp::NumericMatrix> y_missing = R_NilValue,
                     bool binary_outcome = false,
                     double binary_offset = 0.0,
-                    bool ar1_errors = false, double rho_max = 0.95,
-                    double sigma_u_init = 0.2,
                     Rcpp::Nullable<Rcpp::List> x_tv = R_NilValue,
                     Rcpp::Nullable<Rcpp::List> x_tv_trt = R_NilValue,
                     bool treat_effect_re = false,
@@ -299,16 +297,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     // Unit-level random intercept settings.
     state->random_intercept = random_intercept;
     state->gp_constant_mean = gp_constant_mean;
-    state->ar1_errors = ar1_errors;
-    state->rho_max    = rho_max;
     state->treat_effect_re = treat_effect_re;
     state->delta_prior_b   = delta_scale;   // half-Cauchy scale on sigma_delta
-    if (ar1_errors)
-    {
-        state->sigma_u = sigma_u_init;   // adapts from sweep 1
-        state->rho     = 0.3;
-    }
-
     // Binary outcome: keep the 0/1 observation; y itself becomes the latent.
     state->binary_outcome = binary_outcome;
     if (binary_outcome)
@@ -527,8 +517,6 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     // return list below is built after state.reset().
     const int n_missing_cells = (int) std::count(state->y_missing.begin(),
                                                  state->y_missing.end(), 1);
-    const double rho_out = state->rho;
-    const double sigma_u_out = state->sigma_u;
     const double sigma_delta_out = state->sigma_delta;
 
     delete model_pr;
@@ -548,9 +536,6 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
         Rcpp::Named("random_intercept") = random_intercept,
         Rcpp::Named("gp_constant_mean") = gp_constant_mean,
         Rcpp::Named("binary_outcome") = binary_outcome,
-        Rcpp::Named("ar1_errors") = ar1_errors,
-        Rcpp::Named("rho") = rho_out,
-        Rcpp::Named("sigma_u") = sigma_u_out,
         Rcpp::Named("n_missing") = n_missing_cells,
         Rcpp::Named("n_tv_pr") = (int) tv_ptrs.size(),
         Rcpp::Named("n_tv_trt") = (int) tv_trt_ptrs.size(),

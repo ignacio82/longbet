@@ -174,9 +174,6 @@ public:
   // sweep, so they share one entry point.
   void draw_latent_outcome(std::unique_ptr<State> &state);
 
-  // Forward-filter backward-sample the AR(1) error path, then its parameters.
-  void update_ar1(std::unique_ptr<State> &state);
-
   void update_b_values(std::unique_ptr<State> &state);
 
   void update_time_coef(std::unique_ptr<State> &state, std::unique_ptr<X_struct> &x_struct, matrix<size_t> &sorder_std, std::vector<double> &resid, std::vector<double> &diag, std::vector<double> &sig, std::vector<double> &beta);

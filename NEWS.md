@@ -1,3 +1,23 @@
+# longbet 0.7.1
+
+## Removed: `ar1_errors`
+
+It was shipped in 0.3.0 off by default and documented as not recommended,
+because it made the thing the package exists to estimate worse: CATT RMSE
+rose from 0.120 to 0.152 and 95% interval containment fell from 0.938 to
+0.538. A unit-level autoregressive path is smooth enough in time to mimic a
+treatment effect that switches on at a known date, and it competes with the
+treatment forest for exactly that variation.
+
+An option that is off by default, cannot be recommended, and degrades the
+estimand is not a feature; it is a maintenance burden and a trap for anyone
+who switches it on because it sounds principled. `ar1_errors`, `rho_max` and
+`sigma_u_init` are gone, along with `rho` and `sigma_u` in the returned
+object.
+
+Serial correlation in the errors is still real and still unmodelled; see the
+book chapter for what that costs and how to check it.
+
 # longbet 0.7.0
 
 ## Added: unit-level random effects on the treatment effect (`treat_effect_re`)
