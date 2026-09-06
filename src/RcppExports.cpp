@@ -188,6 +188,72 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// longbet_multi_cpp
+Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, arma::mat z, arma::mat t_con, arma::mat t_mod, arma::mat post_t, arma::mat T, arma::mat S, size_t beta_size, size_t num_sweeps, size_t burnin, size_t max_depth, size_t n_min, size_t num_cutpoints, double no_split_penality, size_t mtry_pr, size_t mtry_trt, size_t p_categorical_pr, size_t p_categorical_trt, size_t num_trees_pr, double alpha_pr, double beta_pr, double tau_pr, double kap_pr, double s_pr, size_t num_trees_trt, double alpha_trt, double beta_trt, double tau_trt, double kap_trt, double s_trt, bool verbose, bool parallel, bool set_random_seed, size_t random_seed, bool sample_weights_flag, bool a_scaling, bool b_scaling, bool split_time_ps, bool split_time_trt, double sig_knl, double lambda_knl, bool random_intercept, double gamma_prior_a, double gamma_prior_b, bool gp_constant_mean, Rcpp::List y_missing_list, Rcpp::LogicalVector binary_vec, Rcpp::NumericVector binary_offset_vec, bool ar1_errors, double rho_max, double sigma_u_init, Rcpp::Nullable<Rcpp::List> x_tv, Rcpp::Nullable<Rcpp::List> x_tv_trt, double sur_prior_var);
+RcppExport SEXP _longbet_longbet_multi_cpp(SEXP y_listSEXP, SEXP XSEXP, SEXP X_tauSEXP, SEXP zSEXP, SEXP t_conSEXP, SEXP t_modSEXP, SEXP post_tSEXP, SEXP TSEXP, SEXP SSEXP, SEXP beta_sizeSEXP, SEXP num_sweepsSEXP, SEXP burninSEXP, SEXP max_depthSEXP, SEXP n_minSEXP, SEXP num_cutpointsSEXP, SEXP no_split_penalitySEXP, SEXP mtry_prSEXP, SEXP mtry_trtSEXP, SEXP p_categorical_prSEXP, SEXP p_categorical_trtSEXP, SEXP num_trees_prSEXP, SEXP alpha_prSEXP, SEXP beta_prSEXP, SEXP tau_prSEXP, SEXP kap_prSEXP, SEXP s_prSEXP, SEXP num_trees_trtSEXP, SEXP alpha_trtSEXP, SEXP beta_trtSEXP, SEXP tau_trtSEXP, SEXP kap_trtSEXP, SEXP s_trtSEXP, SEXP verboseSEXP, SEXP parallelSEXP, SEXP set_random_seedSEXP, SEXP random_seedSEXP, SEXP sample_weights_flagSEXP, SEXP a_scalingSEXP, SEXP b_scalingSEXP, SEXP split_time_psSEXP, SEXP split_time_trtSEXP, SEXP sig_knlSEXP, SEXP lambda_knlSEXP, SEXP random_interceptSEXP, SEXP gamma_prior_aSEXP, SEXP gamma_prior_bSEXP, SEXP gp_constant_meanSEXP, SEXP y_missing_listSEXP, SEXP binary_vecSEXP, SEXP binary_offset_vecSEXP, SEXP ar1_errorsSEXP, SEXP rho_maxSEXP, SEXP sigma_u_initSEXP, SEXP x_tvSEXP, SEXP x_tv_trtSEXP, SEXP sur_prior_varSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::List >::type y_list(y_listSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type X_tau(X_tauSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type z(zSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type t_con(t_conSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type t_mod(t_modSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type post_t(post_tSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type T(TSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type S(SSEXP);
+    Rcpp::traits::input_parameter< size_t >::type beta_size(beta_sizeSEXP);
+    Rcpp::traits::input_parameter< size_t >::type num_sweeps(num_sweepsSEXP);
+    Rcpp::traits::input_parameter< size_t >::type burnin(burninSEXP);
+    Rcpp::traits::input_parameter< size_t >::type max_depth(max_depthSEXP);
+    Rcpp::traits::input_parameter< size_t >::type n_min(n_minSEXP);
+    Rcpp::traits::input_parameter< size_t >::type num_cutpoints(num_cutpointsSEXP);
+    Rcpp::traits::input_parameter< double >::type no_split_penality(no_split_penalitySEXP);
+    Rcpp::traits::input_parameter< size_t >::type mtry_pr(mtry_prSEXP);
+    Rcpp::traits::input_parameter< size_t >::type mtry_trt(mtry_trtSEXP);
+    Rcpp::traits::input_parameter< size_t >::type p_categorical_pr(p_categorical_prSEXP);
+    Rcpp::traits::input_parameter< size_t >::type p_categorical_trt(p_categorical_trtSEXP);
+    Rcpp::traits::input_parameter< size_t >::type num_trees_pr(num_trees_prSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha_pr(alpha_prSEXP);
+    Rcpp::traits::input_parameter< double >::type beta_pr(beta_prSEXP);
+    Rcpp::traits::input_parameter< double >::type tau_pr(tau_prSEXP);
+    Rcpp::traits::input_parameter< double >::type kap_pr(kap_prSEXP);
+    Rcpp::traits::input_parameter< double >::type s_pr(s_prSEXP);
+    Rcpp::traits::input_parameter< size_t >::type num_trees_trt(num_trees_trtSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha_trt(alpha_trtSEXP);
+    Rcpp::traits::input_parameter< double >::type beta_trt(beta_trtSEXP);
+    Rcpp::traits::input_parameter< double >::type tau_trt(tau_trtSEXP);
+    Rcpp::traits::input_parameter< double >::type kap_trt(kap_trtSEXP);
+    Rcpp::traits::input_parameter< double >::type s_trt(s_trtSEXP);
+    Rcpp::traits::input_parameter< bool >::type verbose(verboseSEXP);
+    Rcpp::traits::input_parameter< bool >::type parallel(parallelSEXP);
+    Rcpp::traits::input_parameter< bool >::type set_random_seed(set_random_seedSEXP);
+    Rcpp::traits::input_parameter< size_t >::type random_seed(random_seedSEXP);
+    Rcpp::traits::input_parameter< bool >::type sample_weights_flag(sample_weights_flagSEXP);
+    Rcpp::traits::input_parameter< bool >::type a_scaling(a_scalingSEXP);
+    Rcpp::traits::input_parameter< bool >::type b_scaling(b_scalingSEXP);
+    Rcpp::traits::input_parameter< bool >::type split_time_ps(split_time_psSEXP);
+    Rcpp::traits::input_parameter< bool >::type split_time_trt(split_time_trtSEXP);
+    Rcpp::traits::input_parameter< double >::type sig_knl(sig_knlSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda_knl(lambda_knlSEXP);
+    Rcpp::traits::input_parameter< bool >::type random_intercept(random_interceptSEXP);
+    Rcpp::traits::input_parameter< double >::type gamma_prior_a(gamma_prior_aSEXP);
+    Rcpp::traits::input_parameter< double >::type gamma_prior_b(gamma_prior_bSEXP);
+    Rcpp::traits::input_parameter< bool >::type gp_constant_mean(gp_constant_meanSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type y_missing_list(y_missing_listSEXP);
+    Rcpp::traits::input_parameter< Rcpp::LogicalVector >::type binary_vec(binary_vecSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type binary_offset_vec(binary_offset_vecSEXP);
+    Rcpp::traits::input_parameter< bool >::type ar1_errors(ar1_errorsSEXP);
+    Rcpp::traits::input_parameter< double >::type rho_max(rho_maxSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma_u_init(sigma_u_initSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::List> >::type x_tv(x_tvSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::List> >::type x_tv_trt(x_tv_trtSEXP);
+    Rcpp::traits::input_parameter< double >::type sur_prior_var(sur_prior_varSEXP);
+    rcpp_result_gen = Rcpp::wrap(longbet_multi_cpp(y_list, X, X_tau, z, t_con, t_mod, post_t, T, S, beta_size, num_sweeps, burnin, max_depth, n_min, num_cutpoints, no_split_penality, mtry_pr, mtry_trt, p_categorical_pr, p_categorical_trt, num_trees_pr, alpha_pr, beta_pr, tau_pr, kap_pr, s_pr, num_trees_trt, alpha_trt, beta_trt, tau_trt, kap_trt, s_trt, verbose, parallel, set_random_seed, random_seed, sample_weights_flag, a_scaling, b_scaling, split_time_ps, split_time_trt, sig_knl, lambda_knl, random_intercept, gamma_prior_a, gamma_prior_b, gp_constant_mean, y_missing_list, binary_vec, binary_offset_vec, ar1_errors, rho_max, sigma_u_init, x_tv, x_tv_trt, sur_prior_var));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_longbet_predict_longbet", (DL_FUNC) &_longbet_predict_longbet, 4},
@@ -199,6 +265,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_longbet_sample_int_expj", (DL_FUNC) &_longbet_sample_int_expj, 3},
     {"_longbet_sample_int_expjs", (DL_FUNC) &_longbet_sample_int_expjs, 3},
     {"_longbet_longbet_cpp", (DL_FUNC) &_longbet_longbet_cpp, 57},
+    {"_longbet_longbet_multi_cpp", (DL_FUNC) &_longbet_longbet_multi_cpp, 56},
     {NULL, NULL, 0}
 };
 

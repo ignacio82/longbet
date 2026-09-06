@@ -1,3 +1,21 @@
+# longbet 0.6.2
+
+## Fixed: `longbet_multi()` was unusable when installed from GitHub
+
+0.6.0 and 0.6.1 added `longbet_multi_cpp` to the C++ sources but shipped the
+generated Rcpp bindings unchanged, so `R/RcppExports.R` and
+`src/RcppExports.cpp` had no entry for it. Installing from source with
+`Rcpp::compileAttributes()` first -- which is what a development checkout
+does -- regenerated them and hid the problem entirely. Installing the way
+anyone actually would, with `pak` or `remotes` from GitHub, does not, and
+every call failed with
+
+    Error in longbet_multi_cpp(): could not find function "longbet_multi_cpp"
+
+The generated files are now committed in step with the sources. Verified by
+installing a clean copy with no `compileAttributes()` call and fitting a
+two-outcome model.
+
 # longbet 0.6.1
 
 ## Corrected: the precision claim in 0.6.0
