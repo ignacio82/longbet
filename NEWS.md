@@ -1,3 +1,22 @@
+# longbet 0.6.1
+
+## Corrected: the precision claim in 0.6.0
+
+0.6.0's notes said orthogonalization improved CATT RMSE by about 4%. That came
+from comparing `sur = TRUE` against `sur = FALSE`, which is not a clean
+experiment: drawing the loadings consumes random numbers, so the two arms run
+different sampler streams. At zero error correlation, where the coupling does
+nothing at all, that comparison gave contradictory answers -- one condition
+null, another apparently 9% better.
+
+Redone against literally fitting a separate `longbet()` per outcome, 12
+replications in each of four conditions crossing correlated effects with
+correlated errors: CATT RMSE differences of -0.9%, +1.6%, +4.0% and +7.4%,
+none distinguishable from zero (all |t| < 1.3). The residual variance
+reduction is real and large; it does not become a better treatment effect.
+Documentation throughout now says so, and the case for the feature rests on
+joint inference alone.
+
 # longbet 0.6.0
 
 ## Added: several outcomes fitted jointly (`longbet_multi()`)
@@ -33,10 +52,17 @@ against 0.222). `outcome_correlation()` reports the error correlation --
 recovered as 0.79 against a true 0.80 -- so the assumption can be checked
 rather than hoped for.
 
-*Variance reduction.* Orthogonalizing a continuous outcome against correlated
-predecessors shrinks its innovation: on a two-outcome panel with error
-correlation 0.8, the second outcome's residual sd fell from 0.499 to 0.307,
-against a theoretical 0.30, and its CATT RMSE improved about 4%. The first
+*Variance reduction -- in sigma, not in CATT.* Orthogonalizing a continuous
+outcome against correlated predecessors shrinks its innovation: on a
+two-outcome panel with error correlation 0.8 the second outcome's residual sd
+fell from 0.499 to 0.307, against a theoretical 0.30. That reduction is large
+and real, and it does **not** produce a better treatment effect. Measured
+against literally fitting a separate `longbet()` per outcome, 12 replications
+in each of four conditions crossing correlated effects with correlated
+errors, CATT RMSE differences ran from -0.9% to +7.4% and none was
+distinguishable from zero (all |t| < 1.3). The implementation plan this work
+started from predicted a 10-15% RMSE gain; that is not observed, and the case
+for the feature rests on joint inference alone. The first
 outcome is untouched, which is what triangularity means.
 
 ### Two things found by testing that the design had to change for
@@ -64,6 +90,26 @@ understated the truth badly (0.287 and 0.254 against an observed 0.466); the
 joint fit was merely less wrong. Where the outcomes share no structure, it
 buys nothing over separate fits except the convenience of one call and the
 reassurance of a measured correlation.
+
+### Leakage, and why sampler length matters here
+
+The residual one outcome conditions on is meant to be pure shock, but whatever
+of that outcome's own effect the forest has not yet fitted remains in it. When
+two effects are correlated, subtracting it removes real signal from the next
+equation. This is a small-sample and short-sampler problem and it is
+measurable: with perfectly correlated effects and error correlation 0.8, the
+joint fit was 16% worse than separate fits at n = 700 over 10 periods with 50
+sweeps, level at n = 1200 over 15 periods with 100 sweeps, and 7% better at
+n = 2000 over 18 periods with 150 sweeps. `att_stability()` flags exactly the
+under-sampled fits in which this bites.
+
+Two earlier readings of this were wrong and are worth recording. Comparing
+`sur = TRUE` against `sur = FALSE` is not a clean experiment: drawing the
+loadings consumes random numbers, so the two run different sampler streams,
+and at zero error correlation -- where the coupling does nothing -- that
+comparison produced contradictory results (one condition null, another
+apparently 9% better). The numbers above use genuinely separate `longbet()`
+fits instead.
 
 The single-outcome path is untouched: the sweep body was factored into
 `mcmc_one_sweep()` so both loops can drive it, and the staggered-panel

@@ -13,15 +13,29 @@
 #' assumes the two effects are uncorrelated -- which is the one thing you were
 #' trying to find out.
 #'
-#' The second is precision, and it is the smaller of the two. Outcome \eqn{m}
-#' is fitted to the *orthogonalized* target
+#' The second is a smaller residual variance -- though not, as it turns out, a
+#' better treatment effect. Outcome \eqn{m} is fitted to the *orthogonalized*
+#' target
 #' \deqn{\tilde y^{(m)} = y^{(m)} - \sum_{l<m} \Gamma_{ml}\,\varepsilon^{(l)},}
 #' where \eqn{\varepsilon^{(l)}} are the current residuals of the outcomes
 #' before it. Shocks common to several outcomes are absorbed, so
-#' \eqn{\sigma^{(m)}} falls and the intervals tighten. This is the triangular
+#' \eqn{\sigma^{(m)}} falls -- from 0.499 to 0.307 on a test panel with error
+#' correlation 0.8, against a theoretical floor of 0.30. Measured against
+#' separate `longbet()` fits, however, that does not translate into a lower
+#' CATT RMSE: across four conditions crossing correlated effects with
+#' correlated errors, every difference was within noise. Fit jointly for the
+#' joint posterior, not for sharper marginal effects. This is the triangular
 #' factorization \eqn{\Sigma = A_0^{-1} H A_0^{-\top}} of Huber and Rossini
 #' (2022), which is what makes an \eqn{M}-outcome model cost \eqn{M} univariate
 #' fits rather than anything worse.
+#'
+#' @section Sampler length matters more here than in a single fit:
+#' The residual outcome \eqn{m} conditions on is meant to be pure shock, but
+#' whatever of outcome \eqn{l}'s own effect the forest has not fitted stays in
+#' it, and when the two effects are correlated that leaks. It is a
+#' short-sampler problem: 16% worse than separate fits at n = 700 with 50
+#' sweeps, gone by n = 1200 with 100, slightly better by n = 2000 with 150.
+#' Check [att_stability()] before trusting a joint fit's effects.
 #'
 #' @section What this does not do:
 #' The orthogonalization conditions outcome \eqn{m} on other outcomes'
