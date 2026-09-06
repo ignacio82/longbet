@@ -95,6 +95,28 @@ public:
     // target with no change of its own. All zeros for a single outcome.
     std::vector<double> sur_offset;   // n_y * p_y, laid out like y
 
+    // Unit-level random effect ON THE TREATMENT EFFECT: tau_it gains
+    // delta_i * z_it. This is the part of a unit's effect the covariates do
+    // not explain -- the same idea as gamma_i, but for the effect rather than
+    // the level. Identified from the unit's own post-minus-pre contrast, so it
+    // needs at least one untreated and one treated period.
+    //
+    // The prior on delta_i is N(delta_prior_mean[i], delta_prior_var). For a
+    // single outcome the mean is 0 and the variance is sigma_delta^2, learned.
+    // Across outcomes fitted jointly, the mean and variance are the
+    // conditional of a multivariate normal given the OTHER outcomes' deltas
+    // for the same unit -- which is how a large effect on one outcome pulls
+    // the prior for that unit's effect on another. That coupling is what a
+    // correlated-treatment-effect DGP needs and what the error coupling
+    // (sur_offset) cannot provide.
+    bool   treat_effect_re = false;
+    std::vector<double> delta;             // length n_y
+    std::vector<double> delta_prior_mean;  // length n_y
+    double delta_prior_var = 1.0;
+    double sigma_delta     = 0.1;          // single-outcome prior sd, learned
+    double delta_prior_a   = 1.0;          // (unused; kept for ABI)
+    double delta_prior_b   = 0.5;          // half-Cauchy scale A on sigma_delta
+
     // Random
     std::vector<double> prob;
     std::random_device rd;
@@ -217,7 +239,9 @@ public:
                 const size_t k = j * this->n_y + i;
                 this->y_work[k] = this->y_orig[k] - this->gamma[i]
                                 - (this->ar1_errors ? this->u[k] : 0.0)
-                                - this->sur_offset[k];
+                                - this->sur_offset[k]
+                                - (this->treat_effect_re ?
+                                   this->delta[i] * (*(this->z + k)) : 0.0);
             }
         }
     }
@@ -290,6 +314,8 @@ public:
         this->y_work = this->y_orig;
         this->y_std  = this->y_work.data();
         this->sur_offset = std::vector<double>(N * p_y, 0.0);
+        this->delta = std::vector<double>(N, 0.0);
+        this->delta_prior_mean = std::vector<double>(N, 0.0);
         this->gamma  = std::vector<double>(N, 0.0);
         this->random_intercept = false;
         this->gp_constant_mean = false;

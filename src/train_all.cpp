@@ -68,7 +68,9 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
                     bool ar1_errors = false, double rho_max = 0.95,
                     double sigma_u_init = 0.2,
                     Rcpp::Nullable<Rcpp::List> x_tv = R_NilValue,
-                    Rcpp::Nullable<Rcpp::List> x_tv_trt = R_NilValue)
+                    Rcpp::Nullable<Rcpp::List> x_tv_trt = R_NilValue,
+                    bool treat_effect_re = false,
+                    double delta_scale = 0.5)
 {
     // cout << "start training longbet" << endl;
     auto start = system_clock::now();
@@ -299,6 +301,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     state->gp_constant_mean = gp_constant_mean;
     state->ar1_errors = ar1_errors;
     state->rho_max    = rho_max;
+    state->treat_effect_re = treat_effect_re;
+    state->delta_prior_b   = delta_scale;   // half-Cauchy scale on sigma_delta
     if (ar1_errors)
     {
         state->sigma_u = sigma_u_init;   // adapts from sweep 1
@@ -407,6 +411,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     ini_matrix(gamma_xinfo, N, num_sweeps);
     std::vector<double> sigma_gamma_draws(num_sweeps, 0.0);
     std::vector<double> beta_mean_draws(num_sweeps, 0.0);
+    matrix<double> delta_xinfo;
+    ini_matrix(delta_xinfo, N, num_sweeps);
 
     std::unique_ptr<split_info> split_pr(new split_info(x_struct_pr, Xorder_std, Torder_std, t_values));
     std::unique_ptr<split_info> split_trt(new split_info(x_struct_trt, Xorder_tau_std, Sorder_std, s_values));
@@ -418,7 +424,7 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
         sigma0_draw_xinfo, sigma1_draw_xinfo, b_xinfo, a_xinfo, beta_info, beta_xinfo, *trees_pr, *trees_trt, no_split_penality,
         state, model_pr, model_trt, x_struct_pr, x_struct_trt, x_struct_gp, a_scaling, b_scaling, split_time_ps, split_time_trt, 
         resid_info, A_diag_info, Sig_diag_info, gamma_xinfo, sigma_gamma_draws,
-        beta_mean_draws);
+        beta_mean_draws, delta_xinfo);
 
     // predict tauhats and muhats
     // cout << "predict " << endl;
@@ -437,6 +443,8 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
     Rcpp::NumericMatrix beta_draws(beta_size, num_sweeps);
     Rcpp::NumericMatrix gamma_draws(N, num_sweeps);
     std_to_rcpp(gamma_xinfo, gamma_draws);
+    Rcpp::NumericMatrix delta_draws(N, num_sweeps);
+    std_to_rcpp(delta_xinfo, delta_draws);
     Rcpp::NumericVector sigma_gamma_out(num_sweeps);
     for (size_t i = 0; i < num_sweeps; i++) sigma_gamma_out[i] = sigma_gamma_draws[i];
     Rcpp::NumericVector beta_mean_out(num_sweeps);
@@ -521,6 +529,7 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
                                                  state->y_missing.end(), 1);
     const double rho_out = state->rho;
     const double sigma_u_out = state->sigma_u;
+    const double sigma_delta_out = state->sigma_delta;
 
     delete model_pr;
     delete model_trt;
@@ -533,6 +542,9 @@ Rcpp::List longbet_cpp(arma::mat y, arma::mat X, arma::mat X_tau, arma::mat z,
         Rcpp::Named("muhats") = muhats,
         Rcpp::Named("gamma_draws") = gamma_draws,
         Rcpp::Named("sigma_gamma_draws") = sigma_gamma_out,
+        Rcpp::Named("delta_draws") = delta_draws,
+        Rcpp::Named("sigma_delta") = sigma_delta_out,
+        Rcpp::Named("treat_effect_re") = treat_effect_re,
         Rcpp::Named("random_intercept") = random_intercept,
         Rcpp::Named("gp_constant_mean") = gp_constant_mean,
         Rcpp::Named("binary_outcome") = binary_outcome,

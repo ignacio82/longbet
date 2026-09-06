@@ -1,3 +1,65 @@
+# longbet 0.7.0
+
+## Added: unit-level random effects on the treatment effect (`treat_effect_re`)
+
+Until now a unit's treatment effect was whatever the covariates said it was.
+Any departure from that -- a seller who gains far more than their catalog size
+predicts -- had nowhere to go and was absorbed as noise. On a panel where such
+departures are real, the consequence is not a slightly worse estimate; it is
+intervals that are confidently wrong.
+
+    unit effect sd    coverage of the 95% interval    CATT RMSE
+    (true)            without / with delta            without / with
+    0.15              0.46  ->  0.92                  0.1498 -> 0.1293
+    0.25              0.30  ->  0.91                  0.2467 -> 0.1732
+
+Thirty percent coverage from a nominal 95% interval is a broken model, and
+`treat_effect_re = TRUE` fixes it. `tau_it` gains `delta_i * z_it`, with
+`delta_i ~ N(0, sigma_delta^2)` and a half-Cauchy prior on `sigma_delta`
+(Makalic & Schmidt 2016). It is identified by unit i's own pre/post contrast,
+so it needs at least one untreated and one treated period. `sigma_delta` and
+`delta_draws` are returned; `predict.longbet(add_unit_effects = FALSE)` gives
+the covariate-only effect instead.
+
+Off by default, for a reason worth stating: when there is no unit-level
+heterogeneity, turning it on costs about 30% in CATT RMSE (0.0384 to 0.0501),
+because 500 unit effects that are truly zero still have to be estimated. Four
+prior scales spanning a factor of ten were tried and all landed at
+`sigma_delta` near 0.07 -- with roughly six treated cells per unit, that is
+simply not distinguishable from zero. `sigma_delta` relative to the spread of
+the effect is the diagnostic for which regime you are in. The asymmetry is
+what settles the default: 30% when it is not needed, against broken coverage
+when it is needed and absent.
+
+## Not added: correlating those unit effects across outcomes
+
+The obvious next step is to let a unit's unexplained effect on one outcome
+inform its effect on another -- the "people this helps on revenue are the
+people it helps on retention" structure. It was implemented, as a covariance
+`Psi` drawn across outcomes whose off-diagonal fed back as a conditional
+prior, and then removed. Two measurements killed it.
+
+It never helped. Across both heterogeneity strengths, fitting each outcome
+separately with its own `delta` beat the joint fit with independent `delta`,
+which beat the joint fit with correlated `delta` (RMSE 0.1293 / 0.1353 /
+0.1387, then 0.1732 / 0.1802 / 0.1888). `delta_i` is identified from unit i's
+own pre/post contrast, which is first-hand evidence; a second outcome offers
+a noisier second-hand version of the same thing.
+
+And it invented structure. With no unit-level heterogeneity at all, `Psi`
+reported a cross-outcome correlation of 0.81 against a truth of zero, then
+used it to shrink each outcome's noise toward the other's.
+
+`effect_correlation()` still answers the question, but descriptively -- the
+correlation of the posterior-mean `delta` across outcomes, which cannot feed
+back into the fit. It is safe when there is nothing there (0.07 for a truth of
+zero) and attenuated when there is (0.22 and 0.38 for truths of 0.8 and 0.9),
+because correlating shrunken estimates attenuates. Read it as a lower bound
+and as evidence of direction, not as a calibrated parameter.
+
+16 new checks in `tests/test_treat_re.R`. The regression digest is unchanged
+(fdd00377d4ce8e9da733431d996d480b) and the other three suites pass.
+
 # longbet 0.6.2
 
 ## Fixed: `longbet_multi()` was unusable when installed from GitHub

@@ -58,6 +58,7 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     gp_constant_mean = TRUE,
                     outcome = c("continuous", "binary"),
                     ar1_errors = FALSE, rho_max = 0.95, sigma_u_init = 0.2,
+                    treat_effect_re = FALSE, delta_scale = 0.5,
                     x_tv = NULL, x_tv_trt = NULL,
                     tau_pr = NULL, tau_trt = NULL,
                     max_depth = 50, num_cutpoints = 20,
@@ -407,7 +408,9 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                     binary_outcome = binary_outcome,
                     binary_offset = if (binary_outcome) meany else 0,
                     ar1_errors = ar1_errors, rho_max = rho_max,
-                    sigma_u_init = sigma_u_init)
+                    sigma_u_init = sigma_u_init,
+                    treat_effect_re = treat_effect_re,
+                    delta_scale = delta_scale)
     class(obj) = "longbet"
 
     obj$n_tv_pr = length(x_tv)
@@ -426,6 +429,10 @@ longbet <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     #   rowMeans(fit$gamma_draws[, (num_burnin + 1):num_sweeps]).
     obj$gamma_draws = obj$gamma_draws * sdy
     obj$sigma_gamma_draws = obj$sigma_gamma_draws * sdy
+    # Unit treatment random effects, on the outcome scale. predict.longbet()
+    # adds these to tauhats for in-sample predictions.
+    obj$delta_draws = obj$delta_draws * sdy
+    obj$sigma_delta = obj$sigma_delta * sdy
 
     # obj$beta_draws = obj$beta_draws[, (num_burnin+1):num_sweeps]
     return(obj)

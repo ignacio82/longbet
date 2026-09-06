@@ -56,7 +56,8 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
                     bool ar1_errors, double rho_max, double sigma_u_init,
                     Rcpp::Nullable<Rcpp::List> x_tv,
                     Rcpp::Nullable<Rcpp::List> x_tv_trt,
-                    double sur_prior_var)
+                    double sur_prior_var,
+                    bool treat_effect_re, double delta_scale)
 {
     const size_t M = y_list.size();
     if (M < 1) Rcpp::stop("longbet_multi_cpp: need at least one outcome");
@@ -171,7 +172,8 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
 
     std::vector<std::vector<matrix<double>>> tauhats_xinfo(M), muhats_xinfo(M);
     std::vector<matrix<double>> sigma0_x(M), sigma1_x(M), a_x(M), b_x(M), beta_x(M),
-                                resid_i(M), A_diag_i(M), Sig_diag_i(M), beta_i(M), gamma_x(M);
+                                resid_i(M), A_diag_i(M), Sig_diag_i(M), beta_i(M), gamma_x(M),
+                                delta_x(M);
     std::vector<std::vector<double>> sigma_gamma_d(M), beta_mean_d(M);
     std::vector<SweepCtx> ctx(M);
 
@@ -210,6 +212,8 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
         st.gp_constant_mean = gp_constant_mean;
         st.ar1_errors = ar1_errors;
         st.rho_max = rho_max;
+        st.treat_effect_re = treat_effect_re;
+        st.delta_prior_b   = delta_scale;
         if (ar1_errors) { st.sigma_u = sigma_u_init; st.rho = 0.3; }
         st.binary_outcome = binary_m;
         if (binary_m)
@@ -265,6 +269,7 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
         ini_matrix(Sig_diag_i[m], t_size, num_sweeps);
         ini_matrix(beta_i[m], t_size, num_sweeps);
         ini_matrix(gamma_x[m], N, num_sweeps);
+        ini_matrix(delta_x[m], N, num_sweeps);
         sigma_gamma_d[m].assign(num_sweeps, 0.0);
         beta_mean_d[m].assign(num_sweeps, 0.0);
 
@@ -285,6 +290,7 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
         c.split_time_ps = split_time_ps; c.split_time_trt = split_time_trt;
         c.resid_info = &resid_i[m]; c.A_diag_info = &A_diag_i[m]; c.Sig_diag_info = &Sig_diag_i[m];
         c.gamma_xinfo = &gamma_x[m]; c.sigma_gamma_draws = &sigma_gamma_d[m]; c.beta_mean_draws = &beta_mean_d[m];
+        c.delta_xinfo = &delta_x[m];
     }
 
     // ---------------- the joint sampler ----------------
@@ -308,6 +314,8 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
         Rcpp::NumericMatrix beta_values(t_size, num_sweeps), beta_draws(beta_size, num_sweeps);
         Rcpp::NumericMatrix gamma_draws_m(N, num_sweeps);
         std_to_rcpp(gamma_x[m], gamma_draws_m);
+        Rcpp::NumericMatrix delta_draws_m(N, num_sweeps);
+        std_to_rcpp(delta_x[m], delta_draws_m);
         Rcpp::NumericVector sigma_gamma_out(num_sweeps), beta_mean_out(num_sweeps);
         for (size_t i = 0; i < num_sweeps; i++) { sigma_gamma_out[i] = sigma_gamma_d[m][i]; beta_mean_out[i] = beta_mean_d[m][i]; }
         Rcpp::NumericMatrix resid(t_size, num_sweeps), A_diag(t_size, num_sweeps), Sig_diag(t_size, num_sweeps), t_vector(t_size, 1);
@@ -353,6 +361,8 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
             Rcpp::Named("muhats") = muhats,
             Rcpp::Named("gamma_draws") = gamma_draws_m,
             Rcpp::Named("sigma_gamma_draws") = sigma_gamma_out,
+            Rcpp::Named("delta_draws") = delta_draws_m,
+            Rcpp::Named("treat_effect_re") = treat_effect_re,
             Rcpp::Named("random_intercept") = random_intercept,
             Rcpp::Named("gp_constant_mean") = gp_constant_mean,
             Rcpp::Named("binary_outcome") = binary_m,
@@ -404,6 +414,7 @@ Rcpp::List longbet_multi_cpp(Rcpp::List y_list, arma::mat X, arma::mat X_tau, ar
 
     Rcpp::NumericMatrix gamma_out(M * M, num_sweeps);
     std_to_rcpp(gamma_draws, gamma_out);
+
 
     for (size_t m = 0; m < M; m++)
     {

@@ -353,7 +353,8 @@ void longbetModel::update_random_intercept(std::unique_ptr<State> &state)
       double r = state->y_orig[j * state->n_y + i]
                - state->sur_offset[j * state->n_y + i]
                - state->a * state->mu_fit[i][j]
-               - b * state->beta_fit[i][j] * state->tau_fit[i][j];
+               - b * state->beta_fit[i][j] * state->tau_fit[i][j]
+               - (state->treat_effect_re && treated ? state->delta[i] : 0.0);
       if (state->random_intercept && state->ar1_errors)
       {
         r -= state->u[j * state->n_y + i];
@@ -458,7 +459,8 @@ void longbetModel::update_ar1(std::unique_ptr<State> &state)
                      - state->sur_offset[k]
                      - state->a * state->mu_fit[i][t]
                      - b * state->beta_fit[i][t] * state->tau_fit[i][t]
-                     - state->gamma[i];
+                     - state->gamma[i]
+                     - (state->treat_effect_re && treated ? state->delta[i] : 0.0);
 
       const double Q = R[t] + s2;
       const double A = R[t] / Q;
@@ -563,7 +565,8 @@ void longbetModel::draw_latent_outcome(std::unique_ptr<State> &state)
                           + b * state->beta_fit[i][j] * state->tau_fit[i][j]
                           + state->gamma[i]
                           + (state->ar1_errors ? state->u[k] : 0.0)
-                          + state->sur_offset[k];
+                          + state->sur_offset[k]
+                          + (state->treat_effect_re && treated ? state->delta[i] : 0.0);
 
       if (state->binary_outcome && !missing)
       {
@@ -589,6 +592,83 @@ void longbetModel::draw_latent_outcome(std::unique_ptr<State> &state)
 }
 
 // sigma_gamma^2 | gamma ~ InvGamma(a + n/2, b + sum(gamma^2)/2).
+// Conjugate Gibbs draw of the unit-level treatment random effects delta_i.
+// For unit i the treated cells satisfy r_it = delta_i + e_it with
+// e_it ~ N(0, sigma_1^2), against the prior N(m_i, v) held on the state. Units
+// with no treated cell get a draw from the prior: it does not enter their
+// (nonexistent) effect, and it keeps the Psi update over the whole vector
+// coherent when several outcomes are fitted together.
+void longbetModel::update_delta(std::unique_ptr<State> &state)
+{
+  if (!state->treat_effect_re) return;
+
+  const double sig12 = pow(state->sigma_vec[1], 2);
+  const double v     = state->delta_prior_var;
+  const double prior_prec = (v > 0) ? 1.0 / v : 0.0;
+  std::normal_distribution<double> normal_samp(0.0, 1.0);
+
+  for (size_t i = 0; i < state->n_y; i++)
+  {
+    double prec = prior_prec;
+    double wsum = prior_prec * state->delta_prior_mean[i];
+
+    for (size_t j = 0; j < state->p_y; j++)
+    {
+      const size_t k = j * state->n_y + i;
+      if (*(state->z + k) != 1) continue;
+      const double b = state->b_vec[1];
+      // Residual with everything except delta removed.
+      const double r = state->y_orig[k]
+                     - state->sur_offset[k]
+                     - state->a * state->mu_fit[i][j]
+                     - b * state->beta_fit[i][j] * state->tau_fit[i][j]
+                     - state->gamma[i]
+                     - (state->ar1_errors ? state->u[k] : 0.0);
+      prec += 1.0 / sig12;
+      wsum += r / sig12;
+    }
+
+    if (prec <= 0) { state->delta[i] = state->delta_prior_mean[i]; continue; }
+    const double post_var  = 1.0 / prec;
+    const double post_mean = wsum * post_var;
+    state->delta[i] = post_mean + sqrt(post_var) * normal_samp(state->gen);
+  }
+  state->refresh_y_work();
+}
+
+// Single-outcome prior scale for delta: sigma_delta^2 ~ IG(a, b), updated
+// from the deltas of units that were actually treated. Never-treated units
+// carry only a prior draw and would pull the estimate toward the prior.
+void longbetModel::update_sigma_delta(std::unique_ptr<State> &state)
+{
+  if (!state->treat_effect_re) return;
+  double ss = 0.0; size_t n_tr = 0;
+  for (size_t i = 0; i < state->n_y; i++)
+  {
+    bool any = false;
+    for (size_t j = 0; j < state->p_y && !any; j++)
+      any = (*(state->z + j * state->n_y + i) == 1);
+    if (!any) continue;
+    ss += pow(state->delta[i], 2); n_tr++;
+  }
+  // Half-Cauchy(0, A) on sigma_delta, via Makalic & Schmidt (2016):
+  //   sigma^2 | xi ~ IG(1/2, 1/xi),   xi ~ IG(1/2, 1/A^2).
+  // Compared with the IG(1, 0.1) this replaces, it puts far more mass at
+  // zero, which is what stops a set of noisy deltas from sustaining their own
+  // scale when the true unit heterogeneity is nil. A is on the standardized
+  // outcome scale; 0.5 is "an effect the size of half a residual sd", which
+  // is generous for the tail and still tight at the origin.
+  const double A2 = pow(state->delta_prior_b, 2);   // delta_prior_b now = A
+  const double s2 = pow(state->sigma_delta, 2);
+  std::gamma_distribution<double> gxi(1.0, 1.0 / (1.0 / A2 + 1.0 / s2));
+  const double xi = 1.0 / gxi(state->gen);                       // IG(1, ...)
+  std::gamma_distribution<double> gs(0.5 * (1.0 + (double) n_tr),
+                                     1.0 / (1.0 / xi + 0.5 * ss));
+  const double prec = gs(state->gen);                            // 1/sigma^2
+  state->sigma_delta = (prec > 0 && std::isfinite(prec)) ? 1.0 / sqrt(prec) : state->sigma_delta;
+  state->delta_prior_var = pow(state->sigma_delta, 2);
+}
+
 void longbetModel::update_sigma_gamma(std::unique_ptr<State> &state)
 {
   if (!state->random_intercept) return;

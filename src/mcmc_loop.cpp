@@ -35,7 +35,8 @@ void mcmc_loop_longbet(
   matrix<double> &Sig_diag_info,
   matrix<double> &gamma_xinfo,
   std::vector<double> &sigma_gamma_draws,
-  std::vector<double> &beta_mean_draws
+  std::vector<double> &beta_mean_draws,
+  matrix<double> &delta_xinfo
   )
 {
 
@@ -57,6 +58,7 @@ void mcmc_loop_longbet(
   c.split_time_ps = split_time_ps; c.split_time_trt = split_time_trt;
   c.resid_info = &resid_info; c.A_diag_info = &A_diag_info; c.Sig_diag_info = &Sig_diag_info;
   c.gamma_xinfo = &gamma_xinfo; c.sigma_gamma_draws = &sigma_gamma_draws; c.beta_mean_draws = &beta_mean_draws;
+  c.delta_xinfo = &delta_xinfo; c.delta_own_scale = true;
 
   for (size_t sweeps = 0; sweeps < state->num_sweeps; sweeps++)
   {
@@ -202,8 +204,16 @@ void mcmc_one_sweep(size_t sweeps, SweepCtx &c)
     {
       c.model_ps->update_random_intercept((*c.state));
       c.model_ps->update_sigma_gamma((*c.state));
+      // Treatment random effects after the level ones: delta is identified
+      // by the post-minus-pre contrast, so gamma should already have taken
+      // the unit's level out of the residual it sees.
+      c.model_ps->update_delta((*c.state));
+      if (c.delta_own_scale) c.model_ps->update_sigma_delta((*c.state));
       c.model_ps->update_ar1((*c.state));
     }
+    if (c.delta_xinfo)
+      std::copy((*c.state)->delta.begin(), (*c.state)->delta.end(),
+                (*c.delta_xinfo)[sweeps].begin());
     std::copy((*c.state)->gamma.begin(), (*c.state)->gamma.end(), (*c.gamma_xinfo)[sweeps].begin());
     (*c.sigma_gamma_draws)[sweeps] = (*c.state)->sigma_gamma;
     (*c.beta_mean_draws)[sweeps]   = (*c.state)->beta_mean;
@@ -222,6 +232,18 @@ void mcmc_loop_multi(std::vector<SweepCtx> &ctx, size_t num_sweeps,
                      double gamma_prior_var, matrix<double> &gamma_draws)
 {
   const size_t M = ctx.size();
+
+  // Each outcome learns its own delta scale, exactly as a single-outcome fit
+  // does. An earlier version drew a full covariance Psi across outcomes so
+  // that a unit's unexplained effect on one outcome could inform the prior
+  // for another. It was measured and removed: it never improved effect
+  // recovery -- delta_i is identified from unit i's own pre/post contrast,
+  // which is first-hand evidence that a second outcome cannot sharpen -- and
+  // with no true unit heterogeneity it reported a cross-outcome correlation
+  // of 0.81 against a truth of zero, then shrank each outcome's noise toward
+  // the other's. Correlated unit effects are still reported, but descriptively
+  // from the delta draws, where they cannot feed back into the fit.
+  const bool any_re = (**ctx[0].state).treat_effect_re;
   bool any_parallel = false;
   for (size_t m = 0; m < M; m++) any_parallel |= (*ctx[m].state)->parallel;
   if (any_parallel) thread_pool.start();
@@ -271,11 +293,14 @@ void mcmc_loop_multi(std::vector<SweepCtx> &ctx, size_t num_sweeps,
           const size_t k = j * N + i;
           const bool treated = (*(st.z + k) == 1);
           const double b = treated ? st.b_vec[1] : st.b_vec[0];
+          // delta_i * z is treatment-effect signal, not shock; leaving it in
+          // this residual leaks it into every later equation through Gamma.
           raw[m][k] = st.y_orig[k]
                     - st.a * st.mu_fit[i][j]
                     - b * st.beta_fit[i][j] * st.tau_fit[i][j]
                     - st.gamma[i]
-                    - (st.ar1_errors ? st.u[k] : 0.0);
+                    - (st.ar1_errors ? st.u[k] : 0.0)
+                    - (st.treat_effect_re && treated ? st.delta[i] : 0.0);
         }
       }
 
@@ -310,6 +335,7 @@ void mcmc_loop_multi(std::vector<SweepCtx> &ctx, size_t num_sweeps,
       }
     }
 
+    (void) any_re;
     // Store the loadings for this sweep, row-major, unit diagonal.
     for (size_t r = 0; r < M; r++)
       for (size_t cidx = 0; cidx < M; cidx++)

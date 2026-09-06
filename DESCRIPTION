@@ -1,7 +1,7 @@
 Package: longbet
 Type: Package
 Title: longbet: Bayesian Ensemble Trees for Causal Inference on Longitudinal Data
-Version: 0.6.2
+Version: 0.7.0
 Date: 2026-09-05
 Author: Meijia Wang, P. Richard Hahn, Ignacio Martinez
 Maintainer: Meijia Wang <maggiew614@gmail.com>

@@ -164,6 +164,11 @@ public:
 
   void update_sigma_gamma(std::unique_ptr<State> &state);
 
+  // Unit-level random effects on the treatment effect, and their prior scale.
+  void update_delta(std::unique_ptr<State> &state);
+
+  void update_sigma_delta(std::unique_ptr<State> &state);
+
   // Data augmentation: unobserved outcomes in an unbalanced panel, and the
   // latent normal behind a binary outcome. Both redraw y at the top of a
   // sweep, so they share one entry point.

@@ -61,6 +61,7 @@
 longbet_multi <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                           outcome = "continuous", sur = TRUE,
                           sur_prior_var = 1.0,
+                          treat_effect_re = FALSE, delta_scale = 0.5,
                           num_sweeps = 60, num_burnin = 20,
                           num_trees_pr = 20, num_trees_trt = 20,
                           mtry = 0L, n_min = 10,
@@ -226,7 +227,8 @@ longbet_multi <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
         x_tv_trt = if (length(x_tv_trt)) x_tv_trt else NULL,
         # 0 switches the loading update off entirely, which is how
         # sur = FALSE gives genuinely independent equations in one sampler.
-        sur_prior_var = if (sur) sur_prior_var else 0)
+        sur_prior_var = if (sur) sur_prior_var else 0,
+        treat_effect_re = treat_effect_re, delta_scale = delta_scale)
 
     # Each element of $fits is an ordinary longbet object once the scaling
     # metadata predict.longbet() needs is attached.
@@ -241,6 +243,7 @@ longbet_multi <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
         f$outcome <- outcome[m]
         f$gamma_draws <- f$gamma_draws * sdy[m]
         f$sigma_gamma_draws <- f$sigma_gamma_draws * sdy[m]
+        f$delta_draws <- f$delta_draws * sdy[m]
         f$exposure <- list(levels = seq_len(nrow(f$beta_values)) - 1,
                            carryover = FALSE,
                            lambda_knl = lambda_knl)
@@ -258,6 +261,9 @@ longbet_multi <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
     out <- list(fits = fits, M = M, outcome = outcome_user, sur = sur,
                 order = attr_ord,          # internal (fitting) order
                 Gamma_draws = obj$Gamma_draws,   # in INTERNAL order
+                treat_effect_re = treat_effect_re,
+                z_train = z,
+                sdy = sdy,                       # in INTERNAL order
                 num_sweeps = num_sweeps, burnin = num_burnin)
     class(out) <- "longbet_multi"
     out
@@ -376,4 +382,42 @@ outcome_correlation <- function(object) {
     C <- Sig / sqrt(outer(diag(Sig), diag(Sig)))
     inv <- order(ord)
     C[inv, inv, drop = FALSE]
+}
+
+
+#' Correlation of the unit-level treatment effects across outcomes
+#'
+#' With `treat_effect_re = TRUE` each unit carries an effect on every outcome
+#' beyond what the covariates explain. This reports the correlation of those
+#' effects across units: the direct answer to "are the people the treatment
+#' helps on one outcome the people it helps on another".
+#'
+#' It is a **summary of the fitted effects**, not a parameter the model uses.
+#' An earlier version made it one -- a covariance drawn across outcomes, whose
+#' off-diagonal fed back as a prior so that one outcome's unit effect informed
+#' another's. That was removed after measurement: it never improved effect
+#' recovery, because `delta_i` is identified from unit i's own pre/post
+#' contrast and a second outcome adds nothing to first-hand evidence; and with
+#' no true unit heterogeneity it reported a correlation of 0.81 against a
+#' truth of zero. Reporting the correlation is useful. Letting it change the
+#' fit was not.
+#'
+#' @param object A `longbet_multi` fit with `treat_effect_re = TRUE`.
+#' @return An M by M correlation matrix, in the order outcomes were supplied.
+#' @export
+effect_correlation <- function(object) {
+    if (!inherits(object, "longbet_multi")) {
+        stop("effect_correlation() needs a longbet_multi fit.", call. = FALSE)
+    }
+    if (!isTRUE(object$treat_effect_re)) {
+        stop("effect_correlation() needs a fit with treat_effect_re = TRUE. ",
+             "Without unit-level treatment effects there is nothing to ",
+             "correlate.", call. = FALSE)
+    }
+    post <- (object$burnin + 1):object$num_sweeps
+    # Posterior mean unit effect per outcome, over units with a treated cell.
+    D <- vapply(object$fits, function(f) rowMeans(f$delta_draws[, post, drop = FALSE]),
+                numeric(nrow(object$fits[[1]]$delta_draws)))
+    treated <- rowSums(object$z_train) > 0
+    stats::cor(D[treated, , drop = FALSE])
 }

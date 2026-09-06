@@ -25,6 +25,10 @@ struct SweepCtx {
   bool a_scaling, b_scaling, split_time_ps, split_time_trt;
   matrix<double> *resid_info, *A_diag_info, *Sig_diag_info, *gamma_xinfo;
   std::vector<double> *sigma_gamma_draws, *beta_mean_draws;
+  // Unit treatment random effects: per-sweep storage. Every context learns
+  // its own prior scale, in a joint fit as in a single one.
+  matrix<double> *delta_xinfo = nullptr;
+  bool delta_own_scale = true;
 };
 
 // One full sweep -- both forests, scalings, GP, unit effects -- for one
@@ -69,5 +73,6 @@ void mcmc_loop_longbet(
   matrix<double> &Sig_diag_info,
   matrix<double> &gamma_xinfo,
   std::vector<double> &sigma_gamma_draws,
-  std::vector<double> &beta_mean_draws
+  std::vector<double> &beta_mean_draws,
+  matrix<double> &delta_xinfo
   );

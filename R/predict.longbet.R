@@ -30,7 +30,8 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
                             lambda = NULL, random_seed = 1, ps = NULL,
                             summary_only = FALSE, alpha = 0.05,
                             x_tv = NULL, x_tv_trt = NULL,
-                            verbose = FALSE, ...) {
+                            verbose = FALSE, ...,
+                            add_unit_effects = TRUE) {
 
     # Time-varying covariates have to be supplied again, in the same order as
     # at fit time: the trees record which cell-level axis they split on.
@@ -204,6 +205,19 @@ predict.longbet <- function(model, x, x_trt, z, t = NULL, sigma = NULL,
         # obj$tauhats[,, i - num_burnin] = matrix(obj_tau$preds[,i], n, p) * (model$b_draws[i,2] * beta_preds[,,i] - model$b_draws[i,1] * model$beta_draws[1, i]) # * beta_preds[,,i]
         obj$tauhats[,, i - num_burnin] = model$b_draws[i,2] * beta_preds[,,i] * matrix(obj_tau$preds[,i], n, p)  - model$b_draws[i,1] * model$beta_values[1, i] * tau0_i
         # TODO: change tauhat to b1 * beta_s * tau_s - b0 * beta_0 * tau_0 when tau can split on post-treatment time
+    }
+    # Unit-level treatment random effects. Unlike gamma_i, delta_i is PART
+    # of the treatment effect, so it belongs in tauhats -- but predict() can
+    # only attach it when the rows of x are the training units in training
+    # order, which it checks by count. Pass add_unit_effects = FALSE to get
+    # the covariate-only effect nu(x) instead.
+    if (isTRUE(model$treat_effect_re) && isTRUE(add_unit_effects) &&
+        !is.null(model$delta_draws) && nrow(model$delta_draws) == n) {
+        for (i in seq) {
+            obj$tauhats[,, i - num_burnin] <- obj$tauhats[,, i - num_burnin] +
+                model$delta_draws[, i] * z
+        }
+        obj$unit_effects_added <- TRUE
     }
     obj$beta_values <- model$beta_values
     obj$beta_preds <- beta_preds
