@@ -100,15 +100,19 @@ longbet_multi <- function(y, x, x_trt, z, t, pcat, pcat_trt = NULL,
                  ncol(y[[m]]), "; expected ", n, " by ", tt, ". \n")
         }
     }
-    # Continuous outcomes first. The loadings are triangular, so an outcome is
-    # only ever adjusted by those before it; putting the continuous ones first
-    # means they can benefit from each other, and the probits -- which are not
-    # orthogonalized at all, their scale being pinned -- sit at the end where
-    # they adjust nothing. Order does not change any outcome's estimand.
-    if (any(binary) && !all(diff(as.integer(binary)) >= 0)) {
-        ord <- order(binary)
+    # Binary outcomes first. The loadings are triangular, so an outcome is only
+    # ever adjusted by those before it. A probit must not BE adjusted -- its
+    # latent scale is pinned at 1, and orthogonalizing it makes the fit worse
+    # -- but its residual is a perfectly good estimate of that period's shock,
+    # so it can safely adjust others. Putting probits last, as an earlier
+    # version did, left them contributing nothing: a continuous/binary pair
+    # then had no loading at all and the joint fit was two independent fits
+    # wearing a trenchcoat. First is the position that lets them help.
+    # Order does not change any outcome's estimand.
+    if (any(binary) && !all(diff(as.integer(binary)) <= 0)) {
+        ord <- order(!binary)
         y <- y[ord]; outcome <- outcome[ord]; binary <- binary[ord]
-        if (verbose) message("reordering outcomes continuous-first: ",
+        if (verbose) message("reordering outcomes binary-first: ",
                              paste(ord, collapse = ", "))
         attr_ord <- ord
     } else {

@@ -1,3 +1,26 @@
+# longbet 0.7.2
+
+## Fixed: a continuous/binary pair had no coupling at all
+
+`longbet_multi()` ordered outcomes continuous-first. Combined with the rule
+that a probit is never orthogonalized -- its latent scale is pinned, so
+adjusting it makes the fit worse -- that left binary outcomes last, where
+they neither receive an offset nor contribute one. A two-outcome panel of
+one continuous and one binary therefore had no loadings whatsoever: the
+joint fit was two independent fits sharing a function call, and
+`outcome_correlation()` dutifully returned 0.00 against a true 0.6.
+
+Binary outcomes now go first. A probit must not BE adjusted, but its
+residual is a usable estimate of the period's shock, so it can adjust
+others. On the same panel the recovered correlation goes from 0.00 to 0.34.
+
+That is still well short of the truth, and the reason is intrinsic: the
+probit residual is built from a latent drawn from a truncated normal each
+sweep, which carries the sign of the observation and little else. Expect
+roughly half the correlation to come back from a binary outcome, and expect
+the coupling to do correspondingly less work than it does between two
+continuous ones.
+
 # longbet 0.7.1
 
 ## Removed: `ar1_errors`
